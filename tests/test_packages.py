@@ -538,3 +538,54 @@ def test_the_pruned_search_agrees_with_naive_enumeration():
             for _ in range(rng.randint(0, 9))
         ]
         assert total_bid(optimal_allocate(bids)) == brute(bids), bids
+
+
+# ------------------------------------------------------ defects found in review (3b)
+#
+# All three were reproduced before being fixed. Each test below is one of those
+# reproductions, kept so the defect cannot come back.
+
+
+def test_a_negative_bid_is_refused_rather_than_silently_breaking_the_search():
+    """The branch-and-bound bound is a raw suffix sum, which is only an upper bound when
+    every bid is non-negative. A negative bid made the search prune away the true optimum
+    and return nothing. A negative bid is meaningless here, so it is refused outright."""
+    bids = [
+        PackageBid("A", ("a",), 10, 10),
+        PackageBid("B", ("b",), 1, 1),
+        PackageBid("C", ("c",), -100, -100),
+    ]
+    for solve in (greedy_allocate, optimal_allocate):
+        with pytest.raises(ValueError, match="non-negative"):
+            solve(bids)
+    with pytest.raises(ValueError, match="non-negative"):
+        run("vcg_package", bids)
+
+
+def test_the_gap_step_names_the_bid_that_actually_cost_the_welfare():
+    """The old text always blamed 'taking the biggest bid first'. Here the biggest bid
+    (A) is accepted by *both* allocations and blocks nothing — the loss comes from B, at
+    rank two. Confident prose about the wrong cause teaches a wrong idea."""
+    bids = [
+        PackageBid("A", ("X",), 10, 10),
+        PackageBid("B", ("Y", "Z"), 9, 9),
+        PackageBid("C", ("Y",), 5, 5),
+        PackageBid("D", ("Z",), 5, 5),
+    ]
+    gap_step = next(s for s in run("greedy_package", bids).steps if s.highlight.get("stage") == "compare")
+    assert gap_step.state["welfare_gap"] == 1
+    assert "biggest bid first" not in gap_step.detail
+    assert "B" in gap_step.detail
+
+
+def test_float_dust_is_not_reported_as_a_welfare_gap():
+    """0.1 + 0.2 != 0.3 in binary, so an economically tied instance produced a gap of
+    5.55e-17 and narrated a loss that did not exist. trace.py already had the tolerance."""
+    bids = [
+        PackageBid("A", ("X", "Y"), 0.3, 0.3),
+        PackageBid("B", ("X",), 0.1, 0.1),
+        PackageBid("C", ("Y",), 0.2, 0.2),
+    ]
+    gap_step = next(s for s in run("greedy_package", bids).steps if s.highlight.get("stage") == "compare")
+    assert gap_step.state["welfare_gap"] == 0
+    assert "gave up nothing" in gap_step.detail

@@ -87,6 +87,17 @@ def ranked(bids: Bids) -> list[PackageBid]:
                 f"{b.bidder!r} submitted a package of no items; a package bid must name "
                 "at least one item, or it would conflict with nothing and win for free"
             )
+        # The exhaustive search bounds a branch by the plain sum of the bids still ahead
+        # of it. That is only an upper bound while every bid is non-negative: one negative
+        # bid makes the sum understate what the branch could reach, and the search prunes
+        # away the true optimum. Refusing the bid is both truer to the auction — offering
+        # to be paid for taking a bundle is not a bid — and smaller than making the bound
+        # sound over a case that should not exist.
+        if b.bid < 0:
+            raise ValueError(
+                f"{b.bidder!r} bid {b.bid} for {list(b.items)}; a package bid must be "
+                "non-negative"
+            )
     return sorted(bids, key=lambda b: -b.bid)
 
 

@@ -23,7 +23,7 @@ from typing import Any
 
 from agt.registry import mechanism
 from agt.stages import num
-from agt.trace import Number, Step, outcome_allocation, step
+from agt.trace import WELFARE_TOLERANCE, Number, Step, outcome_allocation, step
 from agt.winner_determination import (
     MAX_BIDS,
     MAX_ITEMS,
@@ -125,12 +125,22 @@ def _gap(
     mechanism refuses them. Upgrade: report the gap only when the input is small enough
     and say so, rather than refusing the run.
     """
+    # Tolerance, not `!= 0`: totals summed in different orders differ in the last bit, and
+    # an exact comparison reports a gap of 5e-17 on an instance that is economically tied.
+    # Same reason `outcome_allocation` compares welfare with WELFARE_TOLERANCE.
     lost = total_bid(optimal) - total_bid(greedy)
+    if abs(lost) < WELFARE_TOLERANCE:
+        lost = 0
+    # Name the bids greedy took that the best allocation leaves out. Blaming "the biggest
+    # bid" is false whenever the top bid appears in both allocations and the loss came
+    # from a later one — the text has to say only what the two allocations prove.
+    culprits = [name for name in _names(greedy) if name not in set(_names(optimal))]
     verdict = (
         "Greedy happened to find the best allocation here, so it gave up nothing."
         if not lost
-        else f"Greedy gave up {num(lost)} by taking the biggest bid first and being "
-        "blocked afterwards, and no amount of care in the payment rule can win that back."
+        else f"Greedy gave up {num(lost)} by accepting "
+        f"{', '.join(culprits)}, which the best allocation leaves out, and no amount of "
+        "care in the payment rule can win that back."
     )
     state["greedy_welfare"] = total_bid(greedy)
     state["optimal_welfare"] = total_bid(optimal)
