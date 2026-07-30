@@ -49,11 +49,29 @@
       </div>
       <button type="button" class="ghost" id="add-bidder">+ Add bidder</button>
 
+      <!-- Descriptions of whichever strategies are currently selected; web/series.js
+           fills this from GET /strategies. -->
+      <div class="strategy-notes" id="strategy-notes"></div>
+
       <div class="run-row">
         <button type="button" class="primary" id="run">Run auction</button>
       </div>
 
+      <div class="series-run">
+        <div class="field rounds-field">
+          <label for="rounds">Rounds</label>
+          <input type="number" id="rounds" min="1" max="50" step="1" value="8">
+        </div>
+        <button type="button" class="primary" id="run-series">Run series</button>
+      </div>
+
       <p class="error" id="setup-error" role="alert" hidden></p>
+    </section>
+
+    <section class="card" id="timeline-card" aria-labelledby="timeline-h" hidden>
+      <h2 id="timeline-h">Rounds</h2>
+      <p class="caption" id="timeline-caption"></p>
+      <ol class="round-timeline" id="round-timeline"></ol>
     </section>
 
     <section class="card" aria-labelledby="stages-h">
@@ -69,6 +87,25 @@
   <!-- Right column: the step being rendered                               -->
   <!-- ------------------------------------------------------------------ -->
   <main class="col-main">
+
+    <section class="card" id="series-card" aria-labelledby="series-h" hidden>
+      <h2 id="series-h">Bid paths</h2>
+      <p class="caption">One line per bidder: what they bid, round by round. The dashed line of
+        the same colour is that bidder&rsquo;s private value &mdash; the gap below it is shading.</p>
+
+      <p class="verdict" id="converge-note"></p>
+      <div class="stat-row" id="series-stats"></div>
+      <p class="note" id="series-note"></p>
+
+      <div class="path-chart" id="path-chart"></div>
+      <ul class="legend" id="path-legend"></ul>
+
+      <details class="table-view">
+        <summary>Table view</summary>
+        <div class="scroll-x" id="path-table"></div>
+        <p class="note" id="path-totals"></p>
+      </details>
+    </section>
 
     <section class="card" aria-labelledby="step-h">
       <div class="step-head">
@@ -106,6 +143,12 @@
       </details>
     </section>
 
+    <section class="card" id="decision-card" aria-labelledby="decision-h" hidden>
+      <h2 id="decision-h">Why these bids</h2>
+      <p class="caption" id="decision-caption"></p>
+      <div id="decision-body"></div>
+    </section>
+
     <section class="card" id="result-card" aria-labelledby="result-h" hidden>
       <h2 id="result-h">Outcome</h2>
       <div id="result-body"></div>
@@ -119,5 +162,6 @@
 <div class="tooltip" id="tooltip" aria-hidden="true" hidden></div>
 
 <script src="app.js"></script>
+<script src="series.js"></script>
 </body>
 </html>

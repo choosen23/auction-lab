@@ -32,6 +32,23 @@
   --series-bid:   #2a78d6;   /* the stronger shade: what they actually bid */
   --rule:         #6f6d67;   /* reference lines (reserve / price / clock ...) */
 
+  /* Categorical slots — bidder identity on the bid-path chart, assigned in setup
+     order and never by rank. Straight from the dataviz reference palette; the
+     eight light steps were run through the palette validator against this
+     surface and pass the band, chroma, CVD (worst adjacent ΔE 9.1) and
+     normal-vision (19.6) gates. Three of them sit below 3:1 contrast here, which
+     is a WARN carrying a relief obligation: the chart ships a legend, direct end
+     labels and a full table view, so no bid is ever colour-only. */
+  --cat-1: #2a78d6;   /* blue */
+  --cat-2: #eb6834;   /* orange */
+  --cat-3: #1baf7a;   /* aqua */
+  --cat-4: #eda100;   /* yellow */
+  --cat-5: #e87ba4;   /* magenta */
+  --cat-6: #008300;   /* green */
+  --cat-7: #4a3aa7;   /* violet */
+  --cat-8: #e34948;   /* red */
+  --cat-rest: #898781; /* past eight: one de-emphasis grey, never a ninth hue */
+
   --good:     #0ca30c;
   --critical: #d03b3b;
 
@@ -58,6 +75,19 @@
     --series-value: #256abf;
     --series-bid:   #3987e5;
     --rule:         #a8a69e;
+
+    /* The same eight hues re-stepped for the dark surface, not a second palette.
+       Validated against #1a1a19: all eight pass every gate including 3:1
+       contrast (worst adjacent CVD ΔE 8.4, normal-vision 19.3). */
+    --cat-1: #3987e5;
+    --cat-2: #d95926;
+    --cat-3: #199e70;
+    --cat-4: #c98500;
+    --cat-5: #d55181;
+    --cat-6: #008300;
+    --cat-7: #9085e9;
+    --cat-8: #e66767;
+    --cat-rest: #898781;
 
     --good:     #0ca30c;
     --critical: #e07070;
@@ -96,8 +126,10 @@ h3 { font-size: 13px; margin: 18px 0 8px; color: var(--ink-2); }
 .layout {
   display: grid;
   /* minmax(0, …) on both tracks is what keeps a wide table or chart from
-     forcing the whole page to scroll sideways. */
-  grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
+     forcing the whole page to scroll sideways. Widened from 340px in phase 2:
+     the bidder table gained a strategy column, and at 340 the value and bid
+     inputs were squeezed down to a single visible digit. */
+  grid-template-columns: minmax(0, 380px) minmax(0, 1fr);
   gap: 18px;
   align-items: start;
 }
@@ -384,3 +416,128 @@ table { border-collapse: collapse; width: 100%; }
 .tooltip .tt-key { color: var(--ink-2); margin-right: auto; }
 .tooltip .tt-val { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
 .tooltip .tt-line { width: 12px; height: 0; border-top: 2px solid currentColor; flex: none; }
+
+/* ===========================================================================
+   Phase 2 — strategies, rounds, bid paths. Everything below wraps around the
+   phase 1 UI above; nothing above was restyled to make room for it.
+   =========================================================================== */
+
+/* -------------------------------------------------- strategy column ------- */
+
+/* A number the reader cannot see is worse than no column at all: hold the
+   existing inputs at a legible width and let the card scroll if the strategy
+   column pushes past it, rather than letting the table crush them. */
+.bidder-table td input[type="text"] { min-width: 44px; }
+.bidder-table td input[type="number"] { min-width: 56px; }
+
+.bidder-table .strategy-cell { width: 122px; min-width: 122px; }
+.strategy-cell select { font-size: 12px; padding: 4px 6px; }
+
+.row-params { display: grid; gap: 5px; margin-top: 5px; }
+.row-param { display: grid; gap: 2px; font-size: 11px; color: var(--ink-muted); }
+.row-param input { font-size: 12px; padding: 3px 6px; }
+
+/* The typed bid, dimmed once a run has shown the strategy never read it. The
+   input's own aria-label and title say so too, so opacity is never the only
+   thing carrying the state. */
+.bidder-table input.is-ignored { opacity: 0.45; }
+
+.strategy-notes:empty { display: none; }
+.strategy-notes { margin-top: 12px; display: grid; gap: 6px; }
+.strategy-note { margin: 0; font-size: 12px; line-height: 1.4; color: var(--ink-muted); }
+.strategy-note .k { color: var(--ink-2); font-weight: 600; }
+
+.series-run { display: flex; align-items: flex-end; gap: 10px; margin-top: 10px; }
+.series-run .rounds-field { width: 82px; flex: none; }
+.series-run button { flex: 1; padding: 9px 12px; }
+
+/* ---------------------------------------------------- round timeline ------ */
+
+.round-timeline { display: flex; flex-wrap: wrap; gap: 4px; list-style: none; margin: 0; padding: 0; }
+
+.round-timeline button {
+  min-width: 32px;
+  padding: 5px 7px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+  border-color: var(--border);
+}
+.round-timeline .is-current button {
+  color: var(--ink);
+  font-weight: 600;
+  background: var(--wash);
+  border-color: color-mix(in srgb, var(--series-bid) 45%, transparent);
+}
+/* The round the bids stopped changing, marked on the timeline as well as the
+   chart — the two must never disagree. */
+.round-timeline .is-settled button { box-shadow: inset 0 -3px 0 var(--rule); }
+
+/* --------------------------------------------------------- verdict -------- */
+
+/* Deliberately neutral. Converging is not "good" and still moving is not "bad";
+   colouring them as status would state an opinion the data does not support. */
+.verdict {
+  display: flex;
+  gap: 9px;
+  align-items: baseline;
+  margin: 0 0 14px;
+  padding: 9px 12px;
+  max-width: 78ch;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--rule);
+  border-radius: 7px;
+  background: var(--sunken);
+  font-size: 13px;
+  color: var(--ink);
+}
+.verdict .glyph { flex: none; color: var(--ink-2); font-weight: 700; }
+
+#series-stats { margin-bottom: 4px; }
+#series-stats .stat-value { font-size: 22px; }
+#series-note { margin: 0 0 14px; }
+
+/* ------------------------------------------------------ bid-path chart ---- */
+
+.path-chart svg { display: block; width: 100%; height: auto; }
+
+.path-chart .grid-line { stroke: var(--grid); stroke-width: 1; }
+.path-chart .axis-line { stroke: var(--axis); stroke-width: 1; }
+.path-chart .tick-label { fill: var(--ink-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.path-chart .axis-title { fill: var(--ink-muted); font-size: 11px; }
+.path-chart .rule-label { fill: var(--ink-2); font-size: 11px; }
+
+.path-chart .round-band { fill: var(--wash); }
+.path-chart .settle-line { stroke: var(--rule); stroke-width: 1.5; }
+.path-chart .cross-line { stroke: var(--axis); stroke-width: 1; }
+
+/* The value is a ceiling, not a series: hairline and dashed so it reads as a
+   threshold, in the bidder's own hue so it pairs with their bid line. */
+.path-chart .value-line { stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.55; }
+.path-chart .bid-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+/* The 2px surface ring, so two bidders on the same bid are still two marks. */
+.path-chart .bid-dot { stroke: var(--surface); stroke-width: 2; }
+.path-chart .end-label { fill: var(--ink-2); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.path-chart .hit { fill: transparent; cursor: pointer; }
+
+.legend .key-stroke { width: 16px; height: 0; border-top: 2px solid currentColor; flex: none; }
+.legend .key-dash { width: 16px; height: 0; border-top: 2px dashed var(--ink-muted); flex: none; }
+
+/* ------------------------------------------------------ decision panel ---- */
+
+.decision { padding: 12px 0; border-top: 1px solid var(--border); }
+.decision:first-child { padding-top: 0; border-top: 0; }
+
+.decision-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.decision-head .series-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.decision-id { font-weight: 600; }
+.decision-bid { font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.decision-value { font-size: 12px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+
+.decision-why { margin: 6px 0 0; max-width: 78ch; color: var(--ink-2); }
+
+.considered { margin-top: 8px; }
+.considered summary { cursor: pointer; font-size: 12px; color: var(--ink-2); }
+.considered .data-table { max-width: 420px; }
+.data-table .is-chosen { color: var(--ink); font-weight: 600; }

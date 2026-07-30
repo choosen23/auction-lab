@@ -605,6 +605,10 @@ function addBidderRow(bidder) {
   tr.append(td);
 
   tbody.append(tr);
+
+  // Phase 2 seam. web/series.js hangs the strategy column off this; if it is not
+  // loaded, the row is exactly the phase 1 row and nothing here notices.
+  if (window.seriesExt && window.seriesExt.onBidderRow) window.seriesExt.onBidderRow(tr);
 }
 
 function readBidders() {
@@ -822,6 +826,12 @@ async function boot() {
 
   renderMechanismOptions(app.registry);
   renderParams(app.registry[$('mechanism').value]);
+
+  // The other phase 2 seam: let web/series.js fetch its own registry and build the
+  // strategy column before the first run. Failure there is its own problem to
+  // report — a single auction must still run.
+  if (window.seriesExt && window.seriesExt.boot) await window.seriesExt.boot();
+
   await runAuction();   // the default setup is meant to be useful the moment the page loads
 }
 
