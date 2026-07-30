@@ -195,7 +195,7 @@ def manual(context: StrategyContext) -> BidDecision:
 @strategy(
     "truthful",
     label="Truthful",
-    description="Bid your private value. Dominant under second-price and ascending-clock rules.",
+    description="Bid your private value; dominant under second-price and clock-ascending rules.",
 )
 def truthful(context: StrategyContext) -> BidDecision:
     value = context.bidder.value
@@ -219,7 +219,7 @@ def truthful(context: StrategyContext) -> BidDecision:
 @strategy(
     "shade_bne",
     label="BNE shading (uniform values)",
-    description="Bid value x (n-1)/n, the symmetric equilibrium of a first-price auction with i.i.d. uniform values.",
+    description="Bid value x (n-1)/n: the first-price equilibrium for i.i.d. uniform values.",
 )
 def shade_bne(context: StrategyContext) -> BidDecision:
     value, n = context.bidder.value, context.n
@@ -262,7 +262,7 @@ TICK = {
 @strategy(
     "best_response",
     label="Best response to last round",
-    description="Try candidate bids against last round's bids and keep the most profitable one.",
+    description="Score candidate bids against last round's bids; keep the most profitable.",
     params={"tick": TICK},
 )
 def best_response(context: StrategyContext, tick: Number = 1) -> BidDecision:
