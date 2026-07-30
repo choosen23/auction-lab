@@ -541,3 +541,44 @@ table { border-collapse: collapse; width: 100%; }
 .considered summary { cursor: pointer; font-size: 12px; color: var(--ink-2); }
 .considered .data-table { max-width: 420px; }
 .data-table .is-chosen { color: var(--ink); font-weight: 600; }
+
+/* ===========================================================================
+   Phase 3a — the slot ladder. Additive: nothing above was restyled, and a
+   trace without an allocation never unhides #ladder-card, so single-winner
+   mechanisms render exactly as they did in phase 2.
+
+   The split bar reuses the bidder chart's OWN two-step blue ordinal ramp
+   rather than opening a second colour language on one page: the light step is
+   the gross quantity, the strong step is the committed one — value/bid above,
+   utility/payment here. Re-checked with the dataviz palette validator in
+   ordinal mode against these two surfaces:
+
+     light  #86b6ef -> #2a78d6   light end 2.06:1 vs #fcfcfb   ALL CHECKS PASS
+     dark   #256abf -> #3987e5   light end 3.23:1 vs #1a1a19   ALL CHECKS PASS
+
+   The light end sits at the documented ordinal floor, which carries a "relief
+   required" obligation: the ladder is a table, so every number the bar encodes
+   is already a labelled cell in the same row, and no value is colour-only.
+   =========================================================================== */
+
+/* The whole ladder is its own table view, so the bar needs no separate twin. */
+.ladder-table td.slot { color: var(--ink-2); }
+.ladder-table td.bar { width: 34%; min-width: 120px; padding-right: 0; }
+
+.ladder-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; align-items: center; }
+.ladder-plot { min-width: 0; }
+
+.ladder-track {
+  display: flex;
+  align-items: stretch;
+  /* The surface gap doing the separating — never a border around a segment. */
+  gap: 2px;
+  height: 14px;
+}
+/* Rounded data-end, square at the baseline. */
+.ladder-track span { border-radius: 0; }
+.ladder-track .is-end { border-radius: 0 4px 4px 0; }
+.ladder-track .seg-pays    { background: var(--series-bid); }
+.ladder-track .seg-utility { background: var(--series-value); }
+
+.ladder-total { flex: none; font-size: 11px; color: var(--ink-2); font-variant-numeric: tabular-nums; }

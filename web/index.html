@@ -154,6 +154,15 @@
       <div id="result-body"></div>
     </section>
 
+    <!-- Multi-slot mechanisms only. web/positions.js unhides this when the trace
+         carries an allocation; a single-winner trace never reaches it. -->
+    <section class="card" id="ladder-card" aria-labelledby="ladder-h" hidden>
+      <h2 id="ladder-h">Slots</h2>
+      <p class="caption" id="ladder-caption"></p>
+      <div class="scroll-x" id="ladder"></div>
+      <ul class="legend" id="ladder-legend"></ul>
+    </section>
+
   </main>
 </div>
 
@@ -163,5 +172,6 @@
 
 <script src="app.js"></script>
 <script src="series.js"></script>
+<script src="positions.js"></script>
 </body>
 </html>

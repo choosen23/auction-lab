@@ -97,6 +97,11 @@ function render(index) {
   renderTableView(trace, step);
   renderResult(trace, app.index);
   renderTransport(trace, app.index);
+
+  // Phase 3a seam. web/positions.js draws the slot ladder when the trace carries
+  // an allocation. No allocation, or the file not loaded, and nothing happens —
+  // which is every single-winner mechanism.
+  if (window.positionsExt && window.positionsExt.onRender) window.positionsExt.onRender(trace, app.index);
 }
 
 function goTo(index) { stopPlaying(); render(index); }
