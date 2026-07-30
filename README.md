@@ -26,6 +26,37 @@ JS. `--port` changes the port.
 All support a `reserve` price. A reserve that blocks the sale is flagged inefficient — that cost is
 the point.
 
+## Strategies (phase 2)
+
+Each bidder can pick how it chooses its bid, and you can run repeated rounds to watch those choices
+move.
+
+| Name | Bid rule |
+|---|---|
+| `manual` | Whatever you typed. The default, so single auctions behave exactly as before |
+| `truthful` | `bid = value` |
+| `shade_bne` | `bid = value·(n−1)/n` — the first-price equilibrium for i.i.d. uniform values, and *only* for those |
+| `best_response` | Best reply to rivals' previous-round bids, assuming they repeat them |
+
+`best_response` never does closed-form math. It evaluates candidate bids by **running the mechanism**
+and reading its own utility, so it works on any mechanism — including ones not written yet. That is
+what makes the same strategy code produce opposite dynamics:
+
+| Mechanism | Bidder A (value 100, opening bid 95) | |
+|---|---|---|
+| `second_price` | `95 → 100 100 100 100 100` | Truthful by round 1, never moves again |
+| `first_price` | `95 → 72 72 72 72 72` | Shades below value and settles |
+| `all_pay` | `95 → 72 0 0 1 2 …` | Never settles |
+
+The `all_pay` row is not a bug. All-pay auctions have no pure-strategy equilibrium, so
+best-response cycles forever, and the summary reports `converged: false`. So does first-price when
+bidders start far apart — they leapfrog each other in an Edgeworth cycle rather than settling. The
+tool says "still moving" in both cases instead of implying an equilibrium that was never reached.
+
+Strategies see their own private value, rivals' ids, and rivals' **past bids** — never a rival's
+current value. Auctions are not a full-information game, and the code enforces that rather than
+relying on good manners.
+
 ## How it works
 
 The Python engine runs an auction and emits a **trace**: an ordered list of steps, each carrying a
@@ -40,15 +71,23 @@ browser  --POST /run {mechanism, bidders, params}-->  engine
          <--------------- trace JSON ---------------
 ```
 
+A repeated-round series is the same thing in a loop. `POST /run_series` computes each round's bids
+from the strategies plus history, then calls that same unchanged `run()`. **A round is just a
+trace**, so selecting a round on the timeline feeds the ordinary step view — phase 2 added no new
+rendering path.
+
 | Path | Responsibility |
 |---|---|
 | `agt/trace.py` | `Bidder`, `Step`, `Trace`, and the `outcome()` math |
 | `agt/registry.py` | Mechanism registry, param schemas, `run()` |
 | `agt/stages.py` | Step generators shared across mechanisms |
 | `agt/mechanisms.py` | The five mechanisms |
+| `agt/strategies.py` | Strategy registry and the four bidders |
+| `agt/series.py` | `run_series()`: rounds, history, convergence |
 | `agt/api.py` | Request validation and the JSON-in/JSON-out endpoint bodies |
 | `agt/serve.py` | stdlib HTTP server: routing, static files, byte caps |
-| `web/` | Renderer |
+| `web/app.js` | Step renderer (phase 1) |
+| `web/series.js` | Round timeline, bid-path chart, decision panel (phase 2) |
 
 ## Adding a mechanism
 
@@ -67,7 +106,24 @@ def third_price(bidders, reserve=0):
 ```
 
 The cross-mechanism invariant tests are parametrized over the registry, so a new mechanism
-inherits them automatically.
+inherits them automatically. It also gets a working `best_response` bidder for free, since that
+strategy evaluates candidates by running whatever mechanism it was handed.
+
+## Adding a strategy
+
+Same promise: one decorated function in `agt/strategies.py`, **no JavaScript changes**. The bidder
+table builds its strategy dropdown and any declared params from the registry.
+
+```python
+@strategy("timid", label="Timid", description="...")
+def timid(context: StrategyContext) -> BidDecision:
+    return BidDecision(bid=context.bidder.value * 0.5,
+                       why="Halves its value out of caution, which wins little and saves nothing.")
+```
+
+The `why` string is shown to the reader as the explanation for that bid, so it is held to the same
+standard as a step's `detail`: it must be true, and it must say what assumption it rests on.
+`context` deliberately exposes rivals' ids and past bids but never their current values.
 
 ## Tests
 
@@ -80,11 +136,21 @@ mechanism (revenue equals total payments, utility equals value minus payment) an
 asserting that no deviation from truthful bidding beats honesty in second-price and English. If
 that one fails, the mechanism is wrong — not the test.
 
+Phase 2 adds a test that no strategy can reach a rival's private value, and tests that pin the two
+dynamics above by *direction* rather than by exact bid sequence — the path is an implementation
+detail, but "second-price settles on truth" and "first-price settles below value" are not.
+
 ## Roadmap
 
-Phase 1 (this) is single-item mechanisms. Then: bidder strategies and best-response dynamics,
+Phases 1 and 2 are done: single-item mechanisms, and bidder strategies over repeated rounds. Next:
 multi-item (VCG, GSP, combinatorial), ad-tech budget pacing, and equilibrium analysis. See
 `docs/superpowers/specs/`.
+
+**Known phase 3 prerequisite:** `agt/strategies.py` keeps hardcoded `FIRST_PRICE_LIKE` /
+`SECOND_PRICE_LIKE` tuples, used *only* to pick which caveat sentence a `why` string shows. They
+are correct for the five current mechanisms, but VCG would fall into the wrong branch and be told
+truthful bidding is not dominant — which is false. Before adding VCG, let mechanisms declare that
+property in the registry instead of having strategies keep a list.
 
 ## Prior art
 
