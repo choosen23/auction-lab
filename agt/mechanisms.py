@@ -1,7 +1,7 @@
-"""The mechanism registry and every single-item auction.
+"""Every single-item auction, and the public entry points for running one.
 
 A mechanism is a generator: it ``yield``s one :class:`~agt.trace.Step` per algorithmic
-stage and ``return``s the result dict from :func:`~agt.trace.outcome`. ``run()`` drives
+stage and ``return``s the result dict from :func:`~agt.trace.outcome`. :func:`run` drives
 the generator and wraps everything in a :class:`~agt.trace.Trace`.
 
 Mechanism bodies read top-to-bottom on purpose — they *are* the teaching material, so
@@ -11,29 +11,23 @@ Adding a mechanism means adding one decorated generator here. The web UI builds 
 whole setup form from :func:`registry_schema`, so it needs no changes.
 """
 
-import copy
-import math
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from collections.abc import Iterator
 from typing import Any
 
-from agt.trace import Bidder, Step, Trace, outcome, step
+from agt.registry import REGISTRY, Mechanism, mechanism, registry_schema, run
+from agt.stages import (
+    TIE_RULE,
+    collect_and_sort,
+    ids,
+    no_sale,
+    num,
+    pick_winner,
+    rank,
+    settle,
+)
+from agt.trace import Bidder, Step, step
 
-MechanismFn = Callable[..., Iterator[Step]]
-
-
-@dataclass(frozen=True)
-class Mechanism:
-    """A registered mechanism: how to run it and how to build a form for it."""
-
-    name: str
-    label: str
-    description: str
-    params: dict[str, dict[str, Any]]
-    fn: MechanismFn
-
-
-REGISTRY: dict[str, Mechanism] = {}
+__all__ = ["REGISTRY", "Mechanism", "mechanism", "registry_schema", "run"]
 
 # Every single-item mechanism here supports a reserve, so the schema is shared.
 RESERVE = {
@@ -44,218 +38,13 @@ RESERVE = {
     "description": "Bids below the reserve are ineligible; the seller keeps the item.",
 }
 
-
-def mechanism(
-    name: str,
-    *,
-    label: str,
-    description: str,
-    params: dict[str, dict[str, Any]] | None = None,
-) -> Callable[[MechanismFn], MechanismFn]:
-    """Register a mechanism generator under ``name`` with a form-ready params schema."""
-
-    def decorate(fn: MechanismFn) -> MechanismFn:
-        REGISTRY[name] = Mechanism(name, label, description, params or {}, fn)
-        return fn
-
-    return decorate
-
-
-def registry_schema() -> dict[str, dict[str, Any]]:
-    """Serialize REGISTRY to a JSON-safe dict. The UI generates its form from this."""
-    return {
-        name: {
-            "name": m.name,
-            "label": m.label,
-            "description": m.description,
-            "params": copy.deepcopy(m.params),
-        }
-        for name, m in REGISTRY.items()
-    }
-
-
-# --------------------------------------------------------------------------- run
-
-
-def run(
-    name: str,
-    bidders: list[Bidder],
-    params: dict[str, Any] | None = None,
-) -> Trace:
-    """Run mechanism ``name`` to completion and return its :class:`Trace`."""
-    if name not in REGISTRY:
-        raise ValueError(
-            f"unknown mechanism {name!r}; expected one of {sorted(REGISTRY)}"
-        )
-    spec = REGISTRY[name]
-    resolved = _resolve_params(spec, params or {})
-
-    generator = spec.fn(list(bidders), **resolved)
-    steps: list[Step] = []
-    while True:
-        try:
-            steps.append(next(generator))
-        except StopIteration as stop:  # the generator's ``return`` lands here
-            result = stop.value
-            break
-    if result is None:
-        raise ValueError(f"mechanism {name!r} finished without returning a result")
-    return Trace(
-        mechanism=name,
-        params=resolved,
-        bidders=list(bidders),
-        steps=steps,
-        result=result,
-    )
-
-
-def _resolve_params(spec: Mechanism, given: dict[str, Any]) -> dict[str, Any]:
-    """Fill in schema defaults and reject anything the schema does not declare."""
-    for key in given:
-        if key not in spec.params:
-            raise ValueError(
-                f"unknown parameter {key!r} for {spec.name!r}; "
-                f"expected one of {sorted(spec.params)}"
-            )
-    resolved = {}
-    for key, schema in spec.params.items():
-        value = given.get(key, schema["default"])
-        resolved[key] = _validate_param(key, value, schema)
-    return resolved
-
-
-def _validate_param(key: str, value: Any, schema: dict[str, Any]) -> Any:
-    """Validate one param against its schema entry. ``None`` means 'use the default'."""
-    if value is None and schema["default"] is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"parameter {key!r} must be a number, got {value!r}")
-    if not math.isfinite(value):
-        raise ValueError(f"parameter {key!r} must be finite, got {value!r}")
-    low, high = schema.get("min"), schema.get("max")
-    if low is not None and value < low:
-        raise ValueError(f"parameter {key!r} must be >= {low}, got {value!r}")
-    if high is not None and value > high:
-        raise ValueError(f"parameter {key!r} must be <= {high}, got {value!r}")
-    return value
-
-
-# ----------------------------------------------------------------- shared stages
-
-
-def _n(x: float) -> str:
-    """Format a number for a formula string: 95 not 95.0, 41.5 kept as 41.5."""
-    return f"{x:g}"
-
-
-def _ids(bidders: list[Bidder]) -> list[str]:
-    return [b.id for b in bidders]
-
-
-def _rank(bidders: list[Bidder]) -> list[Bidder]:
-    """Highest bid first. ``sorted`` is stable, so ties keep the listed order."""
-    return sorted(bidders, key=lambda b: -b.bid)
-
-
-TIE_RULE = "Equal bids keep the order the bidders were listed in, so a tie goes to the first-listed bidder."
-
-
-def _sealed_prologue(
-    bidders: list[Bidder], reserve: float, state: dict[str, Any]
-) -> Iterator[Step]:
-    """collect bids -> sort -> (apply reserve). Returns the eligible bidders, ranked."""
-    yield step(
-        "collect bids",
-        "Each bidder submits one sealed bid; private values are never revealed.",
-        state,
-        stage="collect",
-        bidders=_ids(bidders),
-    )
-
-    ranked = _rank(bidders)
-    state["ranked"] = _ids(ranked)
-    yield step(
-        "sort",
-        f"Bids are ranked from highest to lowest. {TIE_RULE}",
-        state,
-        formula=" >= ".join(_n(b.bid) for b in ranked),
-        stage="sort",
-        bidders=state["ranked"],
-    )
-
-    eligible = [b for b in ranked if b.bid >= reserve]
-    if reserve:
-        dropped = [b for b in ranked if b.bid < reserve]
-        state["eligible"] = _ids(eligible)
-        named = ", ".join(f"{b.id} ({_n(b.bid)})" for b in dropped) or "nobody"
-        yield step(
-            "apply reserve",
-            f"The seller refuses to sell below the reserve of {_n(reserve)}, "
-            f"so these bids are struck out: {named}.",
-            state,
-            formula=f"eligible: b_i >= r = {_n(reserve)}",
-            stage="reserve",
-            bidders=_ids(dropped),
-        )
-    return eligible
-
-
-def _no_sale(
-    bidders: list[Bidder], state: dict[str, Any], detail: str, formula: str | None
-) -> Iterator[Step]:
-    """Terminal stage when nothing clears the reserve: nobody wins and nobody pays."""
-    state["winner"] = None
-    state["price"] = 0
-    state["payments"] = {b.id: 0 for b in bidders}
-    yield step("no sale", detail, state, formula=formula, stage="result", bidders=[])
-    return outcome(bidders, winner=None, payments=state["payments"])
-
-
-def _pick_winner(
-    eligible: list[Bidder], state: dict[str, Any], detail: str
-) -> Iterator[Step]:
-    """The highest eligible bid takes the item; ties fall to the first-listed bidder."""
-    winner = eligible[0]
-    tied = [b for b in eligible if b.bid == winner.bid]
-    note = (
-        f" {len(tied)} bidders tied at {_n(winner.bid)}; the tie goes to {winner.id} "
-        "because they were listed first."
-        if len(tied) > 1
-        else ""
-    )
-    state["winner"] = winner.id
-    yield step(
-        "pick winner",
-        detail + note,
-        state,
-        formula=f"argmax b_i = {winner.id} at {_n(winner.bid)}",
-        stage="winner",
-        bidders=[b.id for b in tied],
-    )
-    return winner
-
-
-def _settle(
-    bidders: list[Bidder],
-    state: dict[str, Any],
-    payments: dict[str, float],
-    detail: str,
-) -> Iterator[Step]:
-    """Terminal stage: record who actually hands over money, and how much."""
-    state["payments"] = dict(payments)
-    paying = [b.id for b in bidders if payments.get(b.id, 0)]
-    total = sum(payments.values())
-    terms = [_n(payments[b.id]) for b in bidders if payments.get(b.id, 0)]
-    summed = " + ".join(terms) + f" = {_n(total)}" if len(terms) > 1 else _n(total)
-    yield step(
-        "payments",
-        detail,
-        state,
-        formula=f"revenue = {summed}",
-        stage="payments",
-        bidders=paying,
-    )
-    return outcome(bidders, winner=state["winner"], payments=payments)
+START = {
+    "type": "number",
+    "default": None,
+    "label": "Clock start price",
+    "min": 0,
+    "description": "Leave blank to start at twice the highest bid.",
+}
 
 
 # ------------------------------------------------------------ sealed-bid auctions
@@ -269,19 +58,19 @@ def _settle(
 )
 def second_price(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
     state: dict[str, Any] = {"bids": {b.id: b.bid for b in bidders}, "reserve": reserve}
-    eligible = yield from _sealed_prologue(bidders, reserve, state)
+    eligible = yield from collect_and_sort(bidders, reserve, state)
     if not eligible:
         return (
-            yield from _no_sale(
+            yield from no_sale(
                 bidders,
                 state,
-                f"No bid reached the reserve of {_n(reserve)}, so the item is not sold "
+                f"No bid reached the reserve of {num(reserve)}, so the item is not sold "
                 "even though the bidders valued it.",
-                f"max(b) < r = {_n(reserve)}",
+                f"max(b) < r = {num(reserve)}",
             )
         )
 
-    winner = yield from _pick_winner(
+    winner = yield from pick_winner(
         eligible, state, "The highest eligible bid wins the item."
     )
 
@@ -294,17 +83,17 @@ def second_price(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
         "value can only make you overpay, and shading below it can only lose the item "
         "at a price you would have been happy with, so honesty is the dominant strategy.",
         state,
-        formula=f"p = max(max(b_-i), r) = max({_n(best_loser)}, {_n(reserve)}) = {_n(price)}",
+        formula=f"p = max(max(b_-i), r) = max({num(best_loser)}, {num(reserve)}) = {num(price)}",
         stage="price",
         bidders=[b.id for b in eligible[1:] if b.bid == best_loser],
     )
 
     return (
-        yield from _settle(
+        yield from settle(
             bidders,
             state,
             {b.id: (price if b.id == winner.id else 0) for b in bidders},
-            f"{winner.id} pays {_n(price)}; the losers pay nothing.",
+            f"{winner.id} pays {num(price)}; the losers pay nothing.",
         )
     )
 
@@ -317,18 +106,18 @@ def second_price(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
 )
 def first_price(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
     state: dict[str, Any] = {"bids": {b.id: b.bid for b in bidders}, "reserve": reserve}
-    eligible = yield from _sealed_prologue(bidders, reserve, state)
+    eligible = yield from collect_and_sort(bidders, reserve, state)
     if not eligible:
         return (
-            yield from _no_sale(
+            yield from no_sale(
                 bidders,
                 state,
-                f"No bid reached the reserve of {_n(reserve)}, so the item is not sold.",
-                f"max(b) < r = {_n(reserve)}",
+                f"No bid reached the reserve of {num(reserve)}, so the item is not sold.",
+                f"max(b) < r = {num(reserve)}",
             )
         )
 
-    winner = yield from _pick_winner(
+    winner = yield from pick_winner(
         eligible, state, "The highest eligible bid wins the item."
     )
 
@@ -340,17 +129,17 @@ def first_price(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
         "runner-up is money left on the table. That is why bidders shade their bids "
         "below their true value here, and why the bids you see are not values.",
         state,
-        formula=f"p = b_i = {_n(price)}",
+        formula=f"p = b_i = {num(price)}",
         stage="price",
         bidders=[winner.id],
     )
 
     return (
-        yield from _settle(
+        yield from settle(
             bidders,
             state,
             {b.id: (price if b.id == winner.id else 0) for b in bidders},
-            f"{winner.id} pays their own bid of {_n(price)}; the losers pay nothing.",
+            f"{winner.id} pays their own bid of {num(price)}; the losers pay nothing.",
         )
     )
 
@@ -363,19 +152,19 @@ def first_price(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
 )
 def all_pay(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
     state: dict[str, Any] = {"bids": {b.id: b.bid for b in bidders}, "reserve": reserve}
-    eligible = yield from _sealed_prologue(bidders, reserve, state)
+    eligible = yield from collect_and_sort(bidders, reserve, state)
     if not eligible:
         return (
-            yield from _no_sale(
+            yield from no_sale(
                 bidders,
                 state,
-                f"No bid reached the reserve of {_n(reserve)}, so the auction does not "
+                f"No bid reached the reserve of {num(reserve)}, so the auction does not "
                 "happen and nobody pays — not even the losers.",
-                f"max(b) < r = {_n(reserve)}",
+                f"max(b) < r = {num(reserve)}",
             )
         )
 
-    winner = yield from _pick_winner(
+    winner = yield from pick_winner(
         eligible, state, "The highest eligible bid wins the item."
     )
 
@@ -386,22 +175,22 @@ def all_pay(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
         "Every bidder who cleared the reserve pays their own bid, win or lose. A losing "
         "bid buys nothing, which is why this models lobbying, contests and R&D races.",
         state,
-        formula=f"p_i = b_i for every eligible i; winner pays {_n(price)}",
+        formula=f"p_i = b_i for every eligible i; winner pays {num(price)}",
         stage="price",
-        bidders=_ids(eligible),
+        bidders=ids(eligible),
     )
 
     eligible_ids = {b.id for b in eligible}
     payments = {b.id: (b.bid if b.id in eligible_ids else 0) for b in bidders}
     losses = ", ".join(
-        f"{b.id} loses {_n(b.bid)}" for b in eligible if b.id != winner.id
+        f"{b.id} loses {num(b.bid)}" for b in eligible if b.id != winner.id
     )
     return (
-        yield from _settle(
+        yield from settle(
             bidders,
             state,
             payments,
-            f"{winner.id} pays {_n(price)} and takes the item"
+            f"{winner.id} pays {num(price)} and takes the item"
             + (
                 f"; the losers pay their bids and get nothing: {losses}."
                 if losses
@@ -432,37 +221,37 @@ def english(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
         "they will keep their hand up to, and the clock is what reveals it.",
         state,
         stage="collect",
-        bidders=_ids(bidders),
+        bidders=ids(bidders),
     )
 
     active = [b for b in bidders if b.bid >= reserve]
     state["clock"] = reserve
-    state["active"] = _ids(active)
+    state["active"] = ids(active)
     yield step(
         "clock start",
-        f"The clock opens at the reserve of {_n(reserve)} and only ever rises. "
+        f"The clock opens at the reserve of {num(reserve)} and only ever rises. "
         + (
             f"{len(active)} bidders are willing to pay that much and keep their hands up."
             if active
             else "No bidder is willing to pay that much."
         ),
         state,
-        formula=f"clock = r = {_n(reserve)}",
+        formula=f"clock = r = {num(reserve)}",
         stage="clock",
-        bidders=_ids(active),
+        bidders=ids(active),
     )
     if not active:
         return (
-            yield from _no_sale(
+            yield from no_sale(
                 bidders,
                 state,
-                f"Every hand is down at the opening price of {_n(reserve)}, so the "
+                f"Every hand is down at the opening price of {num(reserve)}, so the "
                 "auction ends before it starts and the item stays with the seller.",
-                f"max(b) < r = {_n(reserve)}",
+                f"max(b) < r = {num(reserve)}",
             )
         )
 
-    ranked = _rank(active)
+    ranked = rank(active)
     winner, losers = ranked[0], ranked[1:]
     clock = reserve
     gone: list[str] = []
@@ -475,7 +264,7 @@ def english(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
         state["active"] = left
         yield step(
             "dropout",
-            f"The clock reaches {_n(clock)}, which is exactly {leaver.id}'s limit, so "
+            f"The clock reaches {num(clock)}, which is exactly {leaver.id}'s limit, so "
             f"{leaver.id} lowers their hand. "
             + (
                 f"{len(left)} bidders are still in."
@@ -483,7 +272,7 @@ def english(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
                 else f"Only {left[0]} is still in."
             ),
             state,
-            formula=f"clock = {_n(clock)} = b_{leaver.id}",
+            formula=f"clock = {num(clock)} = b_{leaver.id}",
             stage="dropout",
             bidders=[leaver.id],
         )
@@ -505,32 +294,23 @@ def english(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
         "price rule",
         f"{winner.id} pays the price at which the last rival dropped out — the "
         f"second-highest limit in the room — and never their own limit of "
-        f"{_n(winner.bid)}. That is why an ascending clock is the same mechanism as a "
+        f"{num(winner.bid)}. That is why an ascending clock is the same mechanism as a "
         "sealed-bid second-price auction: same winner, same price, and the same reason "
         "to be honest about what the item is worth to you.",
         state,
-        formula=f"p = clock at final dropout = {_n(price)}",
+        formula=f"p = clock at final dropout = {num(price)}",
         stage="price",
         bidders=[b.id for b in losers if b.bid == clock],
     )
 
     return (
-        yield from _settle(
+        yield from settle(
             bidders,
             state,
             {b.id: (price if b.id == winner.id else 0) for b in bidders},
-            f"{winner.id} pays {_n(price)}; everybody who dropped out pays nothing.",
+            f"{winner.id} pays {num(price)}; everybody who dropped out pays nothing.",
         )
     )
-
-
-START = {
-    "type": "number",
-    "default": None,
-    "label": "Clock start price",
-    "min": 0,
-    "description": "Leave blank to start at twice the highest bid.",
-}
 
 
 @mechanism(
@@ -549,7 +329,7 @@ def dutch(
         "at which they would still take the item, and says nothing until they claim it.",
         state,
         stage="collect",
-        bidders=_ids(bidders),
+        bidders=ids(bidders),
     )
 
     top = max((b.bid for b in bidders), default=0)
@@ -562,24 +342,24 @@ def dutch(
     state["start"] = start
     yield step(
         "clock start",
-        f"The clock opens at {_n(start)}, above anything anyone would pay, and falls "
+        f"The clock opens at {num(start)}, above anything anyone would pay, and falls "
         "from there. The first bidder to speak gets the item.",
         state,
-        formula=f"clock = {_n(start)}, falling",
+        formula=f"clock = {num(start)}, falling",
         stage="clock",
-        bidders=_ids(bidders),
+        bidders=ids(bidders),
     )
 
     contenders = [b for b in bidders if b.bid >= reserve]
     if not contenders:
         state["clock"] = reserve
         return (
-            yield from _no_sale(
+            yield from no_sale(
                 bidders,
                 state,
-                f"The clock falls all the way to the reserve of {_n(reserve)} without a "
+                f"The clock falls all the way to the reserve of {num(reserve)} without a "
                 "single hand going up, so the seller keeps the item.",
-                f"max(b) < r = {_n(reserve)}",
+                f"max(b) < r = {num(reserve)}",
             )
         )
 
@@ -588,14 +368,14 @@ def dutch(
     yield step(
         "clock falls",
         (
-            f"Nobody speaks at {_n(start)}, so the clock ticks down. The first price any "
-            f"bidder is willing to pay is {_n(accept)}."
+            f"Nobody speaks at {num(start)}, so the clock ticks down. The first price any "
+            f"bidder is willing to pay is {num(accept)}."
             if accept < start
             else f"The clock does not have to fall: somebody is already willing to pay "
-            f"the opening price of {_n(accept)}."
+            f"the opening price of {num(accept)}."
         ),
         state,
-        formula=f"clock: {_n(start)} -> {_n(accept)}",
+        formula=f"clock: {num(start)} -> {num(accept)}",
         stage="clock",
         bidders=[b.id for b in contenders if b.bid >= accept],
     )
@@ -605,7 +385,7 @@ def dutch(
     state["winner"] = winner.id
     yield step(
         "pick winner",
-        f"{winner.id} accepts at {_n(accept)} and the clock stops. "
+        f"{winner.id} accepts at {num(accept)} and the clock stops. "
         + (
             f"{len(claimants)} bidders would have accepted here; the one listed first "
             "reaches the button first."
@@ -628,16 +408,16 @@ def dutch(
         "a descending clock is the same mechanism as a first-price auction, shading and "
         "all.",
         state,
-        formula=f"p = clock at acceptance = b_{winner.id} = {_n(price)}",
+        formula=f"p = clock at acceptance = b_{winner.id} = {num(price)}",
         stage="price",
         bidders=[winner.id],
     )
 
     return (
-        yield from _settle(
+        yield from settle(
             bidders,
             state,
             {b.id: (price if b.id == winner.id else 0) for b in bidders},
-            f"{winner.id} pays {_n(price)}; nobody else pays anything.",
+            f"{winner.id} pays {num(price)}; nobody else pays anything.",
         )
     )
