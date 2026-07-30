@@ -499,3 +499,34 @@ def test_a_run_at_exactly_the_bound_still_succeeds():
     ]
     for name in sorted(PACKAGE_REGISTRY):
         assert run_packages(name, bids).result["welfare_gap"] >= 0
+
+
+def test_the_pruned_search_agrees_with_naive_enumeration():
+    """The branch-and-bound in `optimal_allocate` prunes any branch that cannot strictly
+    beat the incumbent, which is the one place a silent wrong answer could hide. Check it
+    against enumerating every subset, which is obviously correct and unusably slow."""
+    import itertools
+
+    def brute(bids):
+        best = 0
+        for r in range(len(bids) + 1):
+            for combo in itertools.combinations(bids, r):
+                items = [i for b in combo for i in b.items]
+                owners = [b.bidder for b in combo]
+                if len(items) == len(set(items)) and len(owners) == len(set(owners)):
+                    best = max(best, sum(b.bid for b in combo))
+        return best
+
+    rng = random.Random(0)
+    for _ in range(400):
+        items = ["p", "q", "r", "s"][: rng.randint(1, 4)]
+        bids = [
+            PackageBid(
+                rng.choice("ABCD"),
+                tuple(sorted(rng.sample(items, rng.randint(1, len(items))))),
+                v := rng.randint(0, 12),
+                v,
+            )
+            for _ in range(rng.randint(0, 9))
+        ]
+        assert total_bid(optimal_allocate(bids)) == brute(bids), bids
