@@ -16,7 +16,6 @@ from typing import Any
 
 from agt.registry import REGISTRY, Mechanism, mechanism, registry_schema, run
 from agt.stages import (
-    TIE_RULE,
     collect_and_sort,
     ids,
     no_sale,
@@ -278,14 +277,21 @@ def english(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
         )
 
     state["winner"] = winner.id
+    tied = [b for b in active if b.bid == winner.bid]
+    note = (
+        f" {len(tied)} bidders held out to the same limit of {num(winner.bid)}, so the "
+        f"tie goes to {winner.id} for being listed first."
+        if len(tied) > 1
+        else ""
+    )
     yield step(
         "pick winner",
         f"The clock stops: {winner.id} is the last bidder with a hand up and takes "
-        f"the item. {TIE_RULE}",
+        "the item." + note,
         state,
         formula=f"last standing = {winner.id}",
         stage="winner",
-        bidders=[winner.id],
+        bidders=[b.id for b in tied],
     )
 
     price = max(clock, reserve)
@@ -322,6 +328,25 @@ def english(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
 def dutch(
     bidders: list[Bidder], reserve: float = 0, start: float | None = None
 ) -> Iterator[Step]:
+    top = max((b.bid for b in bidders), default=0)
+    floor = max(top, reserve)
+    # A clock opening below the top bid is not a cheaper auction: several bidders would
+    # accept the instant it starts, so the item goes to whoever reacts first rather than
+    # to the highest bidder, and a start below the reserve sells under the floor the
+    # reserve is supposed to guarantee. Neither is a Dutch auction, so refuse to run one.
+    if start is not None and start < floor:
+        raise ValueError(
+            f"parameter 'start' must be at least {num(floor)}: a descending clock "
+            f"cannot open below the highest bid ({num(top)}) or below the reserve "
+            f"({num(reserve)}) — it would sell to whoever reacts first and ignore the "
+            "reserve entirely"
+        )
+    # ponytail: default start = twice the top bid. Ceiling — it peeks at private bids to
+    # pick a number a real seller could not see. Upgrade: pass `start` explicitly, or
+    # derive it from a declared value distribution once phase 2 adds strategies.
+    if start is None:
+        start = max(2 * top, reserve)
+
     state: dict[str, Any] = {"bids": {b.id: b.bid for b in bidders}, "reserve": reserve}
     yield step(
         "collect bids",
@@ -332,12 +357,6 @@ def dutch(
         bidders=ids(bidders),
     )
 
-    top = max((b.bid for b in bidders), default=0)
-    # ponytail: default start = twice the top bid. Ceiling — it peeks at private bids to
-    # pick a number a real seller could not see. Upgrade: pass `start` explicitly, or
-    # derive it from a declared value distribution once phase 2 adds strategies.
-    if start is None:
-        start = max(2 * top, reserve)
     state["clock"] = start
     state["start"] = start
     yield step(
@@ -363,7 +382,9 @@ def dutch(
             )
         )
 
-    accept = min(start, max(b.bid for b in contenders))
+    # The clock is guaranteed to open at or above every bid, so the first price anyone
+    # accepts at is simply the highest bid still in the running.
+    accept = max(b.bid for b in contenders)
     state["clock"] = accept
     yield step(
         "clock falls",

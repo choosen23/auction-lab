@@ -180,6 +180,22 @@ def test_dutch_equals_first_price():
     assert t.result == run("first_price", BIDDERS).result
 
 
+def test_english_does_not_narrate_a_tiebreak_that_did_not_happen():
+    """`detail` is read as the literal account of what happened, so it must be true."""
+    t = run("english", BIDDERS)
+    detail = next(s.detail for s in t.steps if s.label == "pick winner")
+    assert "tie" not in detail.lower()
+    assert "listed first" not in detail.lower()
+
+
+def test_english_names_the_tiebreak_when_limits_actually_tie():
+    t = run("english", [Bidder("A", 50, 50), Bidder("B", 90, 50)])
+    detail = next(s.detail for s in t.steps if s.label == "pick winner")
+    assert "tie" in detail.lower()
+    assert "listed first" in detail.lower()
+    assert t.result["winner"] == "A"
+
+
 def test_dutch_clock_starts_above_every_bid():
     t = run("dutch", BIDDERS)
     start = t.steps[1].state["clock"]
@@ -190,6 +206,40 @@ def test_dutch_accepts_an_explicit_start_price():
     t = run("dutch", BIDDERS, {"start": 300})
     assert t.steps[1].state["clock"] == 300
     assert t.result["price"] == 95
+
+
+def test_dutch_start_below_the_top_bid_is_rejected():
+    """A clock opening under a bidder's limit hands the item to whoever is listed first
+    rather than to the highest bidder, so the configuration is refused, not modelled."""
+    bidders = [Bidder("B", 72, 72), Bidder("A", 100, 95)]
+    with pytest.raises(ValueError, match="start"):
+        run("dutch", bidders, {"start": 50})
+
+
+def test_dutch_start_below_the_reserve_is_rejected():
+    """The reserve is an unconditional floor; the clock cannot open beneath it."""
+    with pytest.raises(ValueError, match="start"):
+        run("dutch", [Bidder("A", 100, 20)], {"reserve": 50, "start": 30})
+
+
+def test_dutch_start_can_never_undercut_the_reserve():
+    """Regression: a low `start` used to sell under the reserve price."""
+    with pytest.raises(ValueError, match="start"):
+        run("dutch", [Bidder("A", 100, 95)], {"reserve": 50, "start": 10})
+
+
+def test_dutch_rejection_message_names_the_minimum_start():
+    """The message goes straight to the user in the setup form, so it must be actionable."""
+    with pytest.raises(ValueError, match="95"):
+        run("dutch", BIDDERS, {"start": 50})
+
+
+def test_dutch_start_equal_to_the_top_bid_still_works():
+    t = run("dutch", BIDDERS, {"start": 95})
+    assert t.steps[1].state["clock"] == 95
+    assert t.result["winner"] == "A"
+    assert t.result["price"] == 95
+    assert t.result == run("first_price", BIDDERS).result
 
 
 def test_dutch_reserve_blocks_sale():
@@ -302,7 +352,13 @@ def test_random_input_produces_a_wellformed_trace(name):
             for j in range(rng.randint(1, 6))
         ]
         reserve = rng.choice([0, rng.randint(0, 120)])
-        t = run(name, bidders, {"reserve": reserve})
+        params: dict = {"reserve": reserve}
+        if "start" in REGISTRY[name].params:
+            # A clock start is only coherent at or above both the top bid and the
+            # reserve; anything lower must be rejected, which is asserted separately.
+            floor = max(max(b.bid for b in bidders), reserve)
+            params["start"] = rng.choice([None, floor, floor + rng.randint(0, 50)])
+        t = run(name, bidders, params)
         json.dumps(t.to_dict())
         r = t.result
         assert r["revenue"] == pytest.approx(sum(r["payments"].values()))
@@ -332,4 +388,33 @@ def test_clock_and_sealed_equivalence_holds_generally(clock, sealed):
             for j in range(rng.randint(1, 5))
         ]
         params = {"reserve": rng.choice([0, rng.randint(0, 110)])}
-        assert run(clock, bidders, params).result == run(sealed, bidders, params).result
+        sealed_params = dict(params)
+        if "start" in REGISTRY[clock].params and rng.random() < 0.5:
+            # every legal clock start must land on the same outcome, not just the default
+            floor = max(max(b.bid for b in bidders), params["reserve"])
+            params["start"] = floor + rng.randint(0, 40)
+        assert (
+            run(clock, bidders, params).result
+            == run(sealed, bidders, sealed_params).result
+        )
+
+
+@pytest.mark.parametrize(
+    "name", sorted(n for n, m in REGISTRY.items() if "start" in m.params)
+)
+def test_clock_start_below_its_floor_is_always_rejected(name):
+    """A clock that opens below the top bid or below the reserve is not a lower price —
+    it silently reallocates the item and defeats the reserve, so it must not run."""
+    rng = random.Random(11)
+    for _ in range(200):
+        bidders = [
+            Bidder(chr(65 + j), rng.randint(0, 100), rng.randint(1, 100))
+            for j in range(rng.randint(1, 5))
+        ]
+        reserve = rng.choice([0, rng.randint(0, 120)])
+        floor = max(max(b.bid for b in bidders), reserve)
+        too_low = rng.uniform(0, floor)
+        if too_low >= floor:
+            continue
+        with pytest.raises(ValueError, match="start"):
+            run(name, bidders, {"reserve": reserve, "start": too_low})
