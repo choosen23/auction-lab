@@ -1,3 +1,5 @@
+import random
+
 import pytest
 
 from agt.mechanisms import REGISTRY, registry_schema, run
@@ -202,3 +204,76 @@ def test_clock_steps_teach_the_equivalence(name, equivalence):
         assert "bids" in s.state
     priced = next(s for s in t.steps if s.label == "price rule")
     assert equivalence in priced.detail.lower()
+
+
+# ------------------------------------------- invariants every mechanism must hold
+#
+# Parametrized over the registry, so a mechanism added in a later phase inherits these
+# checks the moment it is registered.
+
+TOL = 1e-9
+
+
+@pytest.mark.parametrize("name", sorted(REGISTRY))
+def test_invariants_hold(name):
+    t = run(name, BIDDERS)
+    r = t.result
+    assert r["revenue"] == pytest.approx(sum(r["payments"].values()))
+    for b in BIDDERS:
+        gain = b.value if b.id == r["winner"] else 0
+        assert r["utilities"][b.id] == pytest.approx(gain - r["payments"][b.id])
+    assert t.steps, "a mechanism must emit at least one step"
+    assert t.steps[-1].state["winner"] == r["winner"]
+
+
+@pytest.mark.parametrize("name", sorted(REGISTRY))
+def test_invariants_hold_under_a_blocking_reserve(name):
+    t = run(name, BIDDERS, {"reserve": 200})
+    r = t.result
+    assert r["winner"] is None
+    assert r["revenue"] == 0
+    assert r["efficient"] is False
+    assert t.steps[-1].state["winner"] is None
+
+
+@pytest.mark.parametrize("name", sorted(REGISTRY))
+def test_winner_never_pays_more_than_their_bid(name):
+    t = run(name, BIDDERS)
+    winner = t.result["winner"]
+    bid = next(b.bid for b in BIDDERS if b.id == winner)
+    assert t.result["price"] <= bid + TOL
+
+
+@pytest.mark.parametrize("name", ["second_price", "english"])
+def test_truthful_bidding_is_dominant(name):
+    """No deviation from bidding your value beats it, over random value profiles."""
+    rng = random.Random(0)
+    for _ in range(200):
+        values = [rng.randint(1, 100) for _ in range(3)]
+        others = [Bidder(i, v, v) for i, v in zip("BC", values[1:])]
+        truthful = run(name, [Bidder("A", values[0], values[0])] + others)
+        honest_utility = truthful.result["utilities"]["A"]
+        for lie in (values[0] // 2, values[0] * 2):
+            deviant = run(name, [Bidder("A", values[0], lie)] + others)
+            assert deviant.result["utilities"]["A"] <= honest_utility + TOL, (
+                f"{name}: values={values} bid={lie} beat truthful bidding"
+            )
+
+
+@pytest.mark.parametrize("name", ["second_price", "english"])
+def test_truthful_bidding_is_dominant_under_a_reserve(name):
+    """The reserve must not open a profitable lie either."""
+    rng = random.Random(1)
+    for _ in range(200):
+        values = [rng.randint(1, 100) for _ in range(3)]
+        reserve = rng.randint(0, 100)
+        others = [Bidder(i, v, v) for i, v in zip("BC", values[1:])]
+        truthful = run(
+            name, [Bidder("A", values[0], values[0])] + others, {"reserve": reserve}
+        )
+        honest_utility = truthful.result["utilities"]["A"]
+        for lie in (values[0] // 2, values[0] * 2):
+            deviant = run(name, [Bidder("A", values[0], lie)] + others, {"reserve": reserve})
+            assert deviant.result["utilities"]["A"] <= honest_utility + TOL, (
+                f"{name}: values={values} reserve={reserve} bid={lie} beat truthful bidding"
+            )
