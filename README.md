@@ -146,11 +146,11 @@ Phases 1 and 2 are done: single-item mechanisms, and bidder strategies over repe
 multi-item (VCG, GSP, combinatorial), ad-tech budget pacing, and equilibrium analysis. See
 `docs/superpowers/specs/`.
 
-**Known phase 3 prerequisite:** `agt/strategies.py` keeps hardcoded `FIRST_PRICE_LIKE` /
-`SECOND_PRICE_LIKE` tuples, used *only* to pick which caveat sentence a `why` string shows. They
-are correct for the five current mechanisms, but VCG would fall into the wrong branch and be told
-truthful bidding is not dominant — which is false. Before adding VCG, let mechanisms declare that
-property in the registry instead of having strategies keep a list.
+Phase 3a is in: `gsp` and `vcg_positions` sell several ad slots at once to the same scalar
+per-click bids, allocating identically and charging differently. `@mechanism` now takes
+`truthful_dominant`, so whether honesty is dominant is declared by the mechanism rather than kept
+in a list inside `agt/strategies.py` — which is what stopped VCG from being told, falsely, that
+bidding your value hands the surplus to the seller.
 
 ## Prior art
 
