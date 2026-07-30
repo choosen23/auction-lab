@@ -447,3 +447,10 @@ def dutch(
             f"{winner.id} pays {num(price)}; nobody else pays anything.",
         )
     )
+
+
+# Registration is an import side effect, so the multi-item mechanisms have to be pulled
+# in from here: everything else in the project reaches the registry through this module.
+# The import sits at the bottom because REGISTRY is an ordered dict and the setup form
+# should offer the one-item auctions before the many-item ones.
+from agt import positions as _positions  # noqa: E402,F401  (registers gsp, vcg_positions)

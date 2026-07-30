@@ -297,21 +297,41 @@ def test_clock_steps_teach_the_equivalence(name, equivalence):
 # ------------------------------------------- invariants every mechanism must hold
 #
 # Parametrized over the registry, so a mechanism added in a later phase inherits these
-# checks the moment it is registered.
+# checks the moment it is registered. They are written to hold for both result shapes:
+# a single winner who takes their whole value, and an allocation where several bidders
+# each take part of theirs. Narrowing the parametrization to dodge the second shape
+# would leave those mechanisms untested, so the invariants generalize instead.
 
 TOL = 1e-9
+
+
+def gains_of(result, bidders):
+    """Gross value each bidder received, whichever way the mechanism reported it."""
+    if "gains" in result:
+        return result["gains"]
+    return {b.id: (b.value if b.id == result["winner"] else 0) for b in bidders}
+
+
+def winners_of(result, bidders):
+    """Everybody who received something, best first."""
+    if "allocation" in result:
+        return list(result["allocation"])
+    return [result["winner"]] if result["winner"] is not None else []
 
 
 @pytest.mark.parametrize("name", sorted(REGISTRY))
 def test_invariants_hold(name):
     t = run(name, BIDDERS)
     r = t.result
+    gains = gains_of(r, BIDDERS)
     assert r["revenue"] == pytest.approx(sum(r["payments"].values()))
     for b in BIDDERS:
-        gain = b.value if b.id == r["winner"] else 0
-        assert r["utilities"][b.id] == pytest.approx(gain - r["payments"][b.id])
+        assert r["utilities"][b.id] == pytest.approx(gains[b.id] - r["payments"][b.id])
+    assert r["welfare"] == pytest.approx(sum(gains.values()))
+    assert sum(r["utilities"].values()) == pytest.approx(r["welfare"] - r["revenue"])
     assert t.steps, "a mechanism must emit at least one step"
     assert t.steps[-1].state["winner"] == r["winner"]
+    assert winners_of(r, BIDDERS)[:1] == [r["winner"]], "the result names its own top winner"
 
 
 @pytest.mark.parametrize("name", sorted(REGISTRY))
@@ -325,14 +345,17 @@ def test_invariants_hold_under_a_blocking_reserve(name):
 
 
 @pytest.mark.parametrize("name", sorted(REGISTRY))
-def test_winner_never_pays_more_than_their_bid(name):
+def test_nobody_ever_pays_more_than_they_bid(name):
+    """A bid is a ceiling on what you can be charged — for the winner, for the losers an
+    all-pay auction still bills, and for every holder of a slot in a multi-slot one."""
     t = run(name, BIDDERS)
-    winner = t.result["winner"]
-    bid = next(b.bid for b in BIDDERS if b.id == winner)
-    assert t.result["price"] <= bid + TOL
+    for b in BIDDERS:
+        assert t.result["payments"][b.id] <= b.bid + TOL, f"{name}: {b.id} overcharged"
+    winner_bid = next(b.bid for b in BIDDERS if b.id == t.result["winner"])
+    assert t.result["price"] <= winner_bid + TOL
 
 
-@pytest.mark.parametrize("name", ["second_price", "english"])
+@pytest.mark.parametrize("name", ["second_price", "english", "vcg_positions"])
 def test_truthful_bidding_is_dominant(name):
     """No deviation from bidding your value beats it, over random value profiles."""
     rng = random.Random(0)
@@ -348,7 +371,7 @@ def test_truthful_bidding_is_dominant(name):
             )
 
 
-@pytest.mark.parametrize("name", ["second_price", "english"])
+@pytest.mark.parametrize("name", ["second_price", "english", "vcg_positions"])
 def test_truthful_bidding_is_dominant_under_a_reserve(name):
     """The reserve must not open a profitable lie either."""
     rng = random.Random(1)
@@ -385,10 +408,15 @@ def test_random_input_produces_a_wellformed_trace(name):
             # reserve; anything lower must be rejected, which is asserted separately.
             floor = max(max(b.bid for b in bidders), reserve)
             params["start"] = rng.choice([None, floor, floor + rng.randint(0, 50)])
+        if "slots" in REGISTRY[name].params:
+            params["slots"] = rng.randint(1, 4)
+            params["ctr_decay"] = rng.choice([0, 0.5, 0.9, 1])
         t = run(name, bidders, params)
         json.dumps(t.to_dict())
         r = t.result
+        gains = gains_of(r, bidders)
         assert r["revenue"] == pytest.approx(sum(r["payments"].values()))
+        assert r["welfare"] == pytest.approx(sum(gains.values()))
         assert t.steps and t.steps[-1].state["winner"] == r["winner"]
         for s in t.steps:
             assert s.detail.endswith(".")
@@ -397,10 +425,15 @@ def test_random_input_produces_a_wellformed_trace(name):
         if r["winner"] is None:
             assert max(b.bid for b in bidders) < reserve
             assert r["revenue"] == 0
+            assert not winners_of(r, bidders)
         else:
-            won = next(b for b in bidders if b.id == r["winner"])
-            assert won.bid >= reserve
-            assert r["price"] <= won.bid + TOL
+            for who in winners_of(r, bidders):
+                won = next(b for b in bidders if b.id == who)
+                assert won.bid >= reserve
+                assert r["payments"][who] <= won.bid + TOL
+            assert r["price"] <= next(
+                b.bid for b in bidders if b.id == r["winner"]
+            ) + TOL
 
 
 @pytest.mark.parametrize(
