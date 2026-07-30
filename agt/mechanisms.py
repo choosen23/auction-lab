@@ -409,3 +409,235 @@ def all_pay(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
             ),
         )
     )
+
+
+# ---------------------------------------------------------------- clock auctions
+#
+# The clock jumps straight to the next price at which something happens instead of
+# ticking by a fixed increment. Nothing is lost — no bidder acts between two dropouts —
+# and the trace stays short enough to see the equivalences in a handful of steps.
+
+
+@mechanism(
+    "english",
+    label="English (ascending clock)",
+    description="Price rises until one bidder is left; equivalent to a second-price auction.",
+    params={"reserve": RESERVE},
+)
+def english(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
+    state: dict[str, Any] = {"bids": {b.id: b.bid for b in bidders}, "reserve": reserve}
+    yield step(
+        "collect bids",
+        "Nothing is submitted on paper. Each bidder privately knows the highest price "
+        "they will keep their hand up to, and the clock is what reveals it.",
+        state,
+        stage="collect",
+        bidders=_ids(bidders),
+    )
+
+    active = [b for b in bidders if b.bid >= reserve]
+    state["clock"] = reserve
+    state["active"] = _ids(active)
+    yield step(
+        "clock start",
+        f"The clock opens at the reserve of {_n(reserve)} and only ever rises. "
+        + (
+            f"{len(active)} bidders are willing to pay that much and keep their hands up."
+            if active
+            else "No bidder is willing to pay that much."
+        ),
+        state,
+        formula=f"clock = r = {_n(reserve)}",
+        stage="clock",
+        bidders=_ids(active),
+    )
+    if not active:
+        return (
+            yield from _no_sale(
+                bidders,
+                state,
+                f"Every hand is down at the opening price of {_n(reserve)}, so the "
+                "auction ends before it starts and the item stays with the seller.",
+                f"max(b) < r = {_n(reserve)}",
+            )
+        )
+
+    ranked = _rank(active)
+    winner, losers = ranked[0], ranked[1:]
+    clock = reserve
+    gone: list[str] = []
+    for leaver in sorted(losers, key=lambda b: b.bid):
+        clock = leaver.bid
+        gone.append(leaver.id)
+        left = [b.id for b in active if b.id not in gone]
+        state["clock"] = clock
+        state["out"] = list(gone)
+        state["active"] = left
+        yield step(
+            "dropout",
+            f"The clock reaches {_n(clock)}, which is exactly {leaver.id}'s limit, so "
+            f"{leaver.id} lowers their hand. "
+            + (
+                f"{len(left)} bidders are still in."
+                if len(left) > 1
+                else f"Only {left[0]} is still in."
+            ),
+            state,
+            formula=f"clock = {_n(clock)} = b_{leaver.id}",
+            stage="dropout",
+            bidders=[leaver.id],
+        )
+
+    state["winner"] = winner.id
+    yield step(
+        "pick winner",
+        f"The clock stops: {winner.id} is the last bidder with a hand up and takes "
+        f"the item. {TIE_RULE}",
+        state,
+        formula=f"last standing = {winner.id}",
+        stage="winner",
+        bidders=[winner.id],
+    )
+
+    price = max(clock, reserve)
+    state["price"] = price
+    yield step(
+        "price rule",
+        f"{winner.id} pays the price at which the last rival dropped out — the "
+        f"second-highest limit in the room — and never their own limit of "
+        f"{_n(winner.bid)}. That is why an ascending clock is the same mechanism as a "
+        "sealed-bid second-price auction: same winner, same price, and the same reason "
+        "to be honest about what the item is worth to you.",
+        state,
+        formula=f"p = clock at final dropout = {_n(price)}",
+        stage="price",
+        bidders=[b.id for b in losers if b.bid == clock],
+    )
+
+    return (
+        yield from _settle(
+            bidders,
+            state,
+            {b.id: (price if b.id == winner.id else 0) for b in bidders},
+            f"{winner.id} pays {_n(price)}; everybody who dropped out pays nothing.",
+        )
+    )
+
+
+START = {
+    "type": "number",
+    "default": None,
+    "label": "Clock start price",
+    "min": 0,
+    "description": "Leave blank to start at twice the highest bid.",
+}
+
+
+@mechanism(
+    "dutch",
+    label="Dutch (descending clock)",
+    description="Price falls until someone claims the item; equivalent to a first-price auction.",
+    params={"reserve": RESERVE, "start": START},
+)
+def dutch(
+    bidders: list[Bidder], reserve: float = 0, start: float | None = None
+) -> Iterator[Step]:
+    state: dict[str, Any] = {"bids": {b.id: b.bid for b in bidders}, "reserve": reserve}
+    yield step(
+        "collect bids",
+        "Nothing is submitted on paper. Each bidder privately knows the highest price "
+        "at which they would still take the item, and says nothing until they claim it.",
+        state,
+        stage="collect",
+        bidders=_ids(bidders),
+    )
+
+    top = max((b.bid for b in bidders), default=0)
+    # ponytail: default start = twice the top bid. Ceiling — it peeks at private bids to
+    # pick a number a real seller could not see. Upgrade: pass `start` explicitly, or
+    # derive it from a declared value distribution once phase 2 adds strategies.
+    if start is None:
+        start = max(2 * top, reserve)
+    state["clock"] = start
+    state["start"] = start
+    yield step(
+        "clock start",
+        f"The clock opens at {_n(start)}, above anything anyone would pay, and falls "
+        "from there. The first bidder to speak gets the item.",
+        state,
+        formula=f"clock = {_n(start)}, falling",
+        stage="clock",
+        bidders=_ids(bidders),
+    )
+
+    contenders = [b for b in bidders if b.bid >= reserve]
+    if not contenders:
+        state["clock"] = reserve
+        return (
+            yield from _no_sale(
+                bidders,
+                state,
+                f"The clock falls all the way to the reserve of {_n(reserve)} without a "
+                "single hand going up, so the seller keeps the item.",
+                f"max(b) < r = {_n(reserve)}",
+            )
+        )
+
+    accept = min(start, max(b.bid for b in contenders))
+    state["clock"] = accept
+    yield step(
+        "clock falls",
+        (
+            f"Nobody speaks at {_n(start)}, so the clock ticks down. The first price any "
+            f"bidder is willing to pay is {_n(accept)}."
+            if accept < start
+            else f"The clock does not have to fall: somebody is already willing to pay "
+            f"the opening price of {_n(accept)}."
+        ),
+        state,
+        formula=f"clock: {_n(start)} -> {_n(accept)}",
+        stage="clock",
+        bidders=[b.id for b in contenders if b.bid >= accept],
+    )
+
+    claimants = [b for b in contenders if b.bid >= accept]
+    winner = claimants[0]
+    state["winner"] = winner.id
+    yield step(
+        "pick winner",
+        f"{winner.id} accepts at {_n(accept)} and the clock stops. "
+        + (
+            f"{len(claimants)} bidders would have accepted here; the one listed first "
+            "reaches the button first."
+            if len(claimants) > 1
+            else "Nobody else ever gets a chance to say anything."
+        ),
+        state,
+        formula=f"first to accept = {winner.id}",
+        stage="accept",
+        bidders=[b.id for b in claimants],
+    )
+
+    price = accept
+    state["price"] = price
+    yield step(
+        "price rule",
+        f"{winner.id} pays the price they chose to stop the clock at, which is their "
+        "own bid — no rival's limit is ever revealed, let alone used. Deciding when to "
+        "stop the clock is exactly the problem of choosing a sealed first-price bid, so "
+        "a descending clock is the same mechanism as a first-price auction, shading and "
+        "all.",
+        state,
+        formula=f"p = clock at acceptance = b_{winner.id} = {_n(price)}",
+        stage="price",
+        bidders=[winner.id],
+    )
+
+    return (
+        yield from _settle(
+            bidders,
+            state,
+            {b.id: (price if b.id == winner.id else 0) for b in bidders},
+            f"{winner.id} pays {_n(price)}; nobody else pays anything.",
+        )
+    )

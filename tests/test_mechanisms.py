@@ -128,3 +128,77 @@ def test_sealed_bid_steps_are_teaching_material(name):
         assert isinstance(s.highlight["bidders"], list)
         assert "bids" in s.state
     assert any(s.formula for s in t.steps), "at least one step must show a formula"
+
+
+# ------------------------------------------------------------- clock auctions
+
+
+def test_english_equals_second_price():
+    t = run("english", BIDDERS)
+    assert t.result["winner"] == "A"
+    assert t.result["price"] == 72
+    assert t.result == run("second_price", BIDDERS).result
+
+
+def test_english_steps_show_each_dropout():
+    t = run("english", BIDDERS)
+    dropouts = [s for s in t.steps if s.highlight.get("stage") == "dropout"]
+    assert len(dropouts) == 2
+    assert [s.state["clock"] for s in dropouts] == [41, 72]
+
+
+def test_english_clock_starts_at_the_reserve():
+    t = run("english", BIDDERS, {"reserve": 80})
+    assert t.result["winner"] == "A"
+    assert t.result["price"] == 80
+    assert t.result == run("second_price", BIDDERS, {"reserve": 80}).result
+
+
+def test_english_reserve_above_all_bids_blocks_sale():
+    t = run("english", BIDDERS, {"reserve": 200})
+    assert t.result["winner"] is None
+    assert t.result["revenue"] == 0
+
+
+def test_dutch_equals_first_price():
+    t = run("dutch", BIDDERS)
+    assert t.result["winner"] == "A"
+    assert t.result["price"] == 95
+    assert t.result == run("first_price", BIDDERS).result
+
+
+def test_dutch_clock_starts_above_every_bid():
+    t = run("dutch", BIDDERS)
+    start = t.steps[1].state["clock"]
+    assert start > max(b.bid for b in BIDDERS)
+
+
+def test_dutch_accepts_an_explicit_start_price():
+    t = run("dutch", BIDDERS, {"start": 300})
+    assert t.steps[1].state["clock"] == 300
+    assert t.result["price"] == 95
+
+
+def test_dutch_reserve_blocks_sale():
+    t = run("dutch", BIDDERS, {"reserve": 200})
+    assert t.result["winner"] is None
+    assert t.result["revenue"] == 0
+
+
+@pytest.mark.parametrize(
+    "name,equivalence", [("english", "second-price"), ("dutch", "first-price")]
+)
+def test_clock_steps_teach_the_equivalence(name, equivalence):
+    t = run(name, BIDDERS)
+    labels = [s.label for s in t.steps]
+    assert labels[0] == "collect bids"
+    assert "price rule" in labels
+    assert labels[-1] == "payments"
+    assert t.steps[-1].state["winner"] == "A"
+    for s in t.steps:
+        assert s.detail.endswith("."), f"{name}/{s.label}: detail must be a sentence"
+        assert s.highlight["stage"]
+        assert isinstance(s.highlight["bidders"], list)
+        assert "bids" in s.state
+    priced = next(s for s in t.steps if s.label == "price rule")
+    assert equivalence in priced.detail.lower()
