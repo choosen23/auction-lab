@@ -10,6 +10,9 @@ from typing import Any
 
 from agt.trace import Bidder, Step, outcome, step
 
+# ponytail: ties break by list order — deterministic and explainable in one sentence, and
+# every step that can tie says so out loud. Ceiling: it quietly favours whoever is listed
+# first. Upgrade: a seeded random tie-break exposed as a mechanism param.
 TIE_RULE = (
     "Equal bids keep the order the bidders were listed in, "
     "so a tie goes to the first-listed bidder."

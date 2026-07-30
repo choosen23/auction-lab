@@ -27,9 +27,17 @@ class Bidder:
         return {"id": self.id, "value": self.value, "bid": self.bid}
 
 
+# ponytail: `frozen=True` freezes the fields, not the dicts inside them. Ceiling — a
+# caller holding a reference could still edit `state` in place. `step()` deep-copies on
+# the way in, which closes the only path that actually happens (mechanisms reuse one
+# working dict). Upgrade: wrap in MappingProxyType if a mutation bug ever shows up.
 @dataclass(frozen=True)
 class Step:
     """One algorithmic step, carrying a *full* state snapshot rather than a diff.
+
+    ponytail: full snapshots, not diffs — the renderer then needs no replay logic.
+    Ceiling: trace size grows with steps x bidders. Upgrade: switch to diffs only if a
+    trace ever exceeds ~1MB.
 
     ``label``     short stage name, shown in the stage list.
     ``detail``    one plain-English sentence naming the rule that just fired.
