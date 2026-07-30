@@ -53,6 +53,7 @@ START = {
     "second_price",
     label="Second-price (Vickrey)",
     description="Highest bid wins and pays the highest losing bid. Truthful bidding is dominant.",
+    truthful_dominant=True,
     params={"reserve": RESERVE},
 )
 def second_price(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
@@ -101,6 +102,7 @@ def second_price(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
     "first_price",
     label="First-price sealed bid",
     description="Highest bid wins and pays its own bid, which rewards shading below your value.",
+    truthful_dominant=False,
     params={"reserve": RESERVE},
 )
 def first_price(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
@@ -147,6 +149,7 @@ def first_price(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
     "all_pay",
     label="All-pay auction",
     description="Highest bid wins, but every eligible bidder pays their bid — losing bids are sunk.",
+    truthful_dominant=False,
     params={"reserve": RESERVE},
 )
 def all_pay(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
@@ -210,6 +213,7 @@ def all_pay(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
     "english",
     label="English (ascending clock)",
     description="Price rises until one bidder is left; equivalent to a second-price auction.",
+    truthful_dominant=True,
     params={"reserve": RESERVE},
 )
 def english(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
@@ -323,6 +327,7 @@ def english(bidders: list[Bidder], reserve: float = 0) -> Iterator[Step]:
     "dutch",
     label="Dutch (descending clock)",
     description="Price falls until someone claims the item; equivalent to a first-price auction.",
+    truthful_dominant=False,
     params={"reserve": RESERVE, "start": START},
 )
 def dutch(

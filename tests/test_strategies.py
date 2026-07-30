@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from agt.mechanisms import run
+from agt.mechanisms import REGISTRY, run
 from agt.strategies import (
     STRATEGIES,
     BidDecision,
@@ -94,6 +94,23 @@ def test_shade_bne_says_it_is_the_wrong_tool_under_second_price():
     assert "not" in why
     assert "second-price" in why
     assert "dominant" in why
+
+
+@pytest.mark.parametrize("name", sorted(REGISTRY))
+def test_truthful_reads_dominance_off_the_mechanism(name):
+    """The caveat follows the mechanism's own declaration, not a list of names kept here,
+    so a mechanism where truth *is* dominant can never be told it is not."""
+    why = decide("truthful", context(mechanism=name)).why.lower()
+    assert "dominant" in why
+    assert ("not a dominant" in why) != REGISTRY[name].truthful_dominant
+
+
+@pytest.mark.parametrize("name", sorted(REGISTRY))
+def test_shade_bne_warns_only_where_truth_is_dominant(name):
+    """Shading is the wrong answer exactly where honesty is dominant; the word only
+    appears when the mechanism says so."""
+    why = decide("shade_bne", context(mechanism=name)).why.lower()
+    assert ("dominant" in why) == REGISTRY[name].truthful_dominant
 
 
 def test_every_strategy_explains_itself_in_plain_words():

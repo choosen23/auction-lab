@@ -19,18 +19,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from agt.mechanisms import run  # also registers every mechanism
+from agt.mechanisms import REGISTRY, run  # also registers every mechanism
 from agt.registry import _resolve_params
 from agt.stages import num
 from agt.trace import Bidder, Number, Trace
 
 StrategyFn = Callable[..., "BidDecision"]
-
-# Mechanisms whose strategic problem is choosing a first-price bid. Dutch is the same
-# decision as a sealed first-price bid, which phase 1's own trace says out loud.
-FIRST_PRICE_LIKE = ("first_price", "dutch")
-# Mechanisms where bidding your value is dominant.
-SECOND_PRICE_LIKE = ("second_price", "english")
 
 
 @dataclass(frozen=True)
@@ -199,16 +193,17 @@ def manual(context: StrategyContext) -> BidDecision:
 )
 def truthful(context: StrategyContext) -> BidDecision:
     value = context.bidder.value
-    if context.mechanism in SECOND_PRICE_LIKE:
+    spec = REGISTRY[context.mechanism]
+    if spec.truthful_dominant:
         note = (
-            "Here that is a dominant strategy: the price is set by somebody else's bid, "
-            "so honesty can neither raise what you pay nor lose you a good deal."
+            "Here that is a dominant strategy: what you pay is set by somebody else's "
+            "bid, so honesty can neither raise your price nor lose you a good deal."
         )
     else:
         note = (
-            f"Here that is not a dominant strategy: under {context.mechanism} the winner's "
-            "own bid drives what they pay, so bidding your value hands the whole surplus "
-            "to the seller."
+            f"Here that is not a dominant strategy: under {spec.label} your own bid feeds "
+            "back into what you are charged, so there is always some profile of rival "
+            "bids against which bidding something other than your value pays better."
         )
     return BidDecision(
         value,
@@ -223,29 +218,25 @@ def truthful(context: StrategyContext) -> BidDecision:
 )
 def shade_bne(context: StrategyContext) -> BidDecision:
     value, n = context.bidder.value, context.n
+    spec = REGISTRY[context.mechanism]
     bid = value * (n - 1) / n
     derivation = (
         f"{context.bidder.id} shades to value x (n-1)/n = {num(value)} x {n - 1}/{n} = "
         f"{num(bid)}, the symmetric Bayes-Nash equilibrium of a first-price auction when "
         "all n values are drawn independently from the same uniform distribution."
     )
-    if context.mechanism in FIRST_PRICE_LIKE:
+    if spec.truthful_dominant:
         caveat = (
-            "Those two assumptions are the whole reason this number is an equilibrium: "
-            "change the distribution, or let one bidder draw from a different one, and it "
-            "stops being one."
+            f"It is not the equilibrium of {spec.label} and is the wrong tool here: "
+            "bidding your value is dominant under these rules, so shading only risks "
+            "losing at a price you would have been glad to pay."
         )
     else:
         caveat = (
-            f"It is not the equilibrium of {context.mechanism}, nor of any other "
-            "mechanism or value distribution than the one it was derived for, so it is "
-            "the wrong tool here"
-        )
-        caveat += (
-            ": under second-price rules bidding your value is dominant, and shading only "
-            "risks losing at a price you would have been glad to pay."
-            if context.mechanism in SECOND_PRICE_LIKE
-            else "."
+            "Those assumptions are load-bearing, and so is the payment rule: change the "
+            "distribution, let one bidder draw from a different one, or charge the winner "
+            f"by any rule other than their own bid — which {spec.label} may well do — and "
+            "the number stops being an equilibrium."
         )
     return BidDecision(bid, f"{derivation} {caveat}")
 

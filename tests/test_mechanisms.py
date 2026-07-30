@@ -2,7 +2,7 @@ import random
 
 import pytest
 
-from agt.mechanisms import REGISTRY, registry_schema, run
+from agt.mechanisms import REGISTRY, mechanism, registry_schema, run
 from agt.trace import Bidder
 
 BIDDERS = [Bidder("A", 100, 95), Bidder("B", 72, 72), Bidder("C", 41, 41)]
@@ -116,6 +116,33 @@ def test_registry_schema_is_json_safe_and_form_ready():
     assert reserve["type"] == "number"
     assert reserve["default"] == 0
     assert reserve["label"]
+
+
+def test_every_mechanism_declares_whether_truth_is_dominant():
+    """Whether honesty is dominant is a fact about the mechanism, so the mechanism owns
+    it. Keeping it in a list inside the strategy module made every new mechanism default
+    to 'not dominant' by silence, which is how a truthful one would be misdescribed."""
+    for name, spec in REGISTRY.items():
+        assert isinstance(spec.truthful_dominant, bool), f"{name} declares no flag"
+    assert REGISTRY["second_price"].truthful_dominant is True
+    assert REGISTRY["english"].truthful_dominant is True
+    assert REGISTRY["first_price"].truthful_dominant is False
+    assert REGISTRY["dutch"].truthful_dominant is False
+    assert REGISTRY["all_pay"].truthful_dominant is False
+
+
+def test_registering_a_mechanism_without_the_flag_is_refused():
+    """Correct by construction: a new mechanism cannot forget to answer the question."""
+    with pytest.raises(TypeError):
+        mechanism("nameless", label="X", description="X.")
+
+
+def test_registry_schema_publishes_the_truthfulness_flag():
+    import json
+
+    payload = json.loads(json.dumps(registry_schema()))
+    assert payload["second_price"]["truthful_dominant"] is True
+    assert payload["first_price"]["truthful_dominant"] is False
 
 
 def test_trace_is_json_serializable_for_every_mechanism():

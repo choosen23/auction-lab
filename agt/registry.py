@@ -18,13 +18,20 @@ MechanismFn = Callable[..., Iterator[Step]]
 
 @dataclass(frozen=True)
 class Mechanism:
-    """A registered mechanism: how to run it and how to build a form for it."""
+    """A registered mechanism: how to run it and how to build a form for it.
+
+    ``truthful_dominant`` says whether bidding your private value is a dominant strategy
+    under these rules. It lives here, next to the payment rule that decides it, because
+    anything else keeping the list — a strategy module, the UI — has to remember to
+    update itself every time a mechanism is added, and silence there reads as "no".
+    """
 
     name: str
     label: str
     description: str
     params: dict[str, dict[str, Any]]
     fn: MechanismFn
+    truthful_dominant: bool = False
 
 
 REGISTRY: dict[str, Mechanism] = {}
@@ -35,12 +42,19 @@ def mechanism(
     *,
     label: str,
     description: str,
+    truthful_dominant: bool,
     params: dict[str, dict[str, Any]] | None = None,
 ) -> Callable[[MechanismFn], MechanismFn]:
-    """Register a mechanism generator under ``name`` with a form-ready params schema."""
+    """Register a mechanism generator under ``name`` with a form-ready params schema.
+
+    ``truthful_dominant`` has no default on purpose: a new mechanism must answer the
+    question rather than inherit an answer by omission.
+    """
 
     def decorate(fn: MechanismFn) -> MechanismFn:
-        REGISTRY[name] = Mechanism(name, label, description, params or {}, fn)
+        REGISTRY[name] = Mechanism(
+            name, label, description, params or {}, fn, truthful_dominant
+        )
         return fn
 
     return decorate
@@ -53,6 +67,7 @@ def registry_schema() -> dict[str, dict[str, Any]]:
             "name": m.name,
             "label": m.label,
             "description": m.description,
+            "truthful_dominant": m.truthful_dominant,
             "params": copy.deepcopy(m.params),
         }
         for name, m in REGISTRY.items()
