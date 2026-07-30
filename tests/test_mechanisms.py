@@ -277,3 +277,48 @@ def test_truthful_bidding_is_dominant_under_a_reserve(name):
             assert deviant.result["utilities"]["A"] <= honest_utility + TOL, (
                 f"{name}: values={values} reserve={reserve} bid={lie} beat truthful bidding"
             )
+
+
+@pytest.mark.parametrize("name", sorted(REGISTRY))
+def test_random_input_produces_a_wellformed_trace(name):
+    """Registry contract: any registered mechanism survives arbitrary bidders."""
+    import json
+
+    rng = random.Random(7)
+    for _ in range(100):
+        bidders = [
+            Bidder(chr(65 + j), rng.randint(0, 100), rng.randint(0, 100))
+            for j in range(rng.randint(1, 6))
+        ]
+        reserve = rng.choice([0, rng.randint(0, 120)])
+        t = run(name, bidders, {"reserve": reserve})
+        json.dumps(t.to_dict())
+        r = t.result
+        assert r["revenue"] == pytest.approx(sum(r["payments"].values()))
+        assert t.steps and t.steps[-1].state["winner"] == r["winner"]
+        for s in t.steps:
+            assert s.detail.endswith(".")
+            assert s.highlight["stage"] and isinstance(s.highlight["bidders"], list)
+            assert "bids" in s.state
+        if r["winner"] is None:
+            assert max(b.bid for b in bidders) < reserve
+            assert r["revenue"] == 0
+        else:
+            won = next(b for b in bidders if b.id == r["winner"])
+            assert won.bid >= reserve
+            assert r["price"] <= won.bid + TOL
+
+
+@pytest.mark.parametrize(
+    "clock,sealed", [("english", "second_price"), ("dutch", "first_price")]
+)
+def test_clock_and_sealed_equivalence_holds_generally(clock, sealed):
+    """The equivalences are not a fluke of one bid profile."""
+    rng = random.Random(3)
+    for _ in range(200):
+        bidders = [
+            Bidder(chr(65 + j), rng.randint(0, 100), rng.randint(0, 100))
+            for j in range(rng.randint(1, 5))
+        ]
+        params = {"reserve": rng.choice([0, rng.randint(0, 110)])}
+        assert run(clock, bidders, params).result == run(sealed, bidders, params).result
