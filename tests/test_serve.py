@@ -1,20 +1,25 @@
-"""Tests for the HTTP layer.
+"""Tests for the HTTP layer and the request layer under it.
 
-``validate`` and ``run_payload`` are plain functions, so most of this file needs no
-socket at all. The handler tests bind port 0 on the loopback interface, because status
-codes and header handling are what they exist to check and faking them proves nothing.
+``validate`` and ``run_payload`` live in :mod:`agt.api` and are plain functions, so most
+of this file needs no socket at all; they are reached through ``serve`` because that is
+the front door every caller uses. The handler tests bind port 0 on the loopback
+interface, because status codes and header handling are what they exist to check and
+faking them proves nothing.
 """
 
 import http.client
 import json
 import os
 import threading
+import time
 from http.server import ThreadingHTTPServer
 
 import pytest
 
 from agt import serve
 from agt.registry import REGISTRY, Mechanism
+from agt.series import MAX_ROUNDS
+from agt.strategies import STRATEGIES
 from agt.trace import Bidder, step
 
 GOOD = {
@@ -26,10 +31,29 @@ GOOD = {
     "params": {"reserve": 0},
 }
 
+SERIES = {
+    "mechanism": "first_price",
+    "bidders": [
+        {"id": "A", "value": 100, "bid": 95},
+        {"id": "B", "value": 72, "bid": 72},
+    ],
+    "strategies": {
+        "A": {"name": "best_response", "params": {"tick": 1}},
+        "B": {"name": "truthful"},
+    },
+    "rounds": 4,
+    "params": {"reserve": 0},
+}
+
 
 def payload(**overrides):
     """A valid payload with the named keys replaced."""
     return {**GOOD, **overrides}
+
+
+def series_payload(**overrides):
+    """A valid ``/run_series`` payload with the named keys replaced."""
+    return {**SERIES, **overrides}
 
 
 def bidders(n):
@@ -264,6 +288,221 @@ def test_run_payload_returns_500_with_the_partial_trace(broken_mechanism):
     json.dumps(body)
 
 
+# -------------------------------------------------------------- validate_series
+
+
+def test_validate_series_accepts_a_good_payload():
+    valid = serve.validate_series(SERIES)
+    assert valid["mechanism"] == "first_price"
+    assert valid["bidders"] == [Bidder("A", 100, 95), Bidder("B", 72, 72)]
+    assert valid["params"] == {"reserve": 0}
+    assert valid["rounds"] == 4
+    assert valid["strategies"] == {
+        "A": {"name": "best_response", "params": {"tick": 1}},
+        "B": {"name": "truthful", "params": {}},
+    }
+
+
+def test_validate_series_reuses_the_bidder_rules():
+    """The extra endpoint must not grow a second, weaker copy of the bidder checks."""
+    with pytest.raises(ValueError, match="between 1 and 12"):
+        serve.validate_series(series_payload(bidders=bidders(13), strategies={}))
+    with pytest.raises(ValueError, match="non-negative"):
+        serve.validate_series(
+            series_payload(
+                bidders=[{"id": "A", "value": 10, "bid": -1}],
+                strategies={"A": {"name": "manual"}},
+            )
+        )
+    with pytest.raises(ValueError, match="unknown mechanism"):
+        serve.validate_series(series_payload(mechanism="nope"))
+    with pytest.raises(ValueError, match="unknown parameter"):
+        serve.validate_series(series_payload(params={"bogus": 1}))
+
+
+def test_validate_series_defaults_missing_rounds():
+    assert serve.validate_series(series_payload(rounds=None))["rounds"] > 0
+    stripped = {k: v for k, v in SERIES.items() if k != "rounds"}
+    assert serve.validate_series(stripped)["rounds"] > 0
+
+
+def test_validate_series_accepts_the_round_bounds():
+    assert serve.validate_series(series_payload(rounds=1))["rounds"] == 1
+    assert serve.validate_series(series_payload(rounds=MAX_ROUNDS))["rounds"] == MAX_ROUNDS
+
+
+def test_validate_series_accepts_an_integral_float_for_rounds():
+    """JSON round-trips make 3 into 3.0 often enough that refusing it is just rude."""
+    assert serve.validate_series(series_payload(rounds=3.0))["rounds"] == 3
+
+
+@pytest.mark.parametrize("bad", [0, -1, MAX_ROUNDS + 1, 10**400])
+def test_validate_series_rejects_rounds_out_of_range(bad):
+    with pytest.raises(ValueError, match=f"between 1 and {MAX_ROUNDS}"):
+        serve.validate_series(series_payload(rounds=bad))
+
+
+@pytest.mark.parametrize("bad", [True, False, 1.5, "3", "many", [4], {}, float("inf")])
+def test_validate_series_rejects_rounds_that_are_not_whole_numbers(bad):
+    with pytest.raises(ValueError, match="whole number"):
+        serve.validate_series(series_payload(rounds=bad))
+
+
+def test_validate_series_rejects_an_unknown_strategy_and_lists_the_valid_ones():
+    with pytest.raises(ValueError, match="unknown strategy") as caught:
+        serve.validate_series(
+            series_payload(strategies={"A": {"name": "collude"}, "B": {"name": "truthful"}})
+        )
+    assert "truthful" in str(caught.value)
+    assert "'A'" in str(caught.value)
+
+
+@pytest.mark.parametrize("bad", [None, 7, ["truthful"]])
+def test_validate_series_rejects_a_non_string_strategy_name(bad):
+    with pytest.raises(ValueError, match="unknown strategy"):
+        serve.validate_series(
+            series_payload(strategies={"A": {"name": bad}, "B": {"name": "truthful"}})
+        )
+
+
+def test_validate_series_rejects_strategies_missing_a_bidder():
+    with pytest.raises(ValueError, match="strategies") as caught:
+        serve.validate_series(series_payload(strategies={"A": {"name": "truthful"}}))
+    assert "'B'" in str(caught.value)
+
+
+def test_validate_series_rejects_strategies_for_a_bidder_not_in_the_auction():
+    strangers = {**SERIES["strategies"], "Z": {"name": "truthful"}}
+    with pytest.raises(ValueError, match="strategies") as caught:
+        serve.validate_series(series_payload(strategies=strangers))
+    assert "'Z'" in str(caught.value)
+
+
+@pytest.mark.parametrize("junk", [None, [], "truthful", 3])
+def test_validate_series_rejects_non_dict_strategies(junk):
+    with pytest.raises(ValueError, match="strategies"):
+        serve.validate_series(series_payload(strategies=junk))
+
+
+@pytest.mark.parametrize("junk", ["truthful", 3, ["truthful"], None])
+def test_validate_series_rejects_a_strategy_entry_that_is_not_an_object(junk):
+    with pytest.raises(ValueError, match="A"):
+        serve.validate_series(
+            series_payload(strategies={"A": junk, "B": {"name": "truthful"}})
+        )
+
+
+def test_validate_series_rejects_an_unknown_strategy_param():
+    entry = {"name": "best_response", "params": {"bogus": 1}}
+    with pytest.raises(ValueError, match="unknown parameter") as caught:
+        serve.validate_series(
+            series_payload(strategies={"A": entry, "B": {"name": "truthful"}})
+        )
+    assert "tick" in str(caught.value)
+
+
+def test_validate_series_rejects_a_param_another_strategy_declares():
+    """`tick` belongs to best_response only, so truthful must refuse it."""
+    entry = {"name": "truthful", "params": {"tick": 1}}
+    with pytest.raises(ValueError, match="unknown parameter"):
+        serve.validate_series(
+            series_payload(strategies={"A": entry, "B": {"name": "truthful"}})
+        )
+
+
+@pytest.mark.parametrize("junk", [[], "tick", 3])
+def test_validate_series_rejects_non_dict_strategy_params(junk):
+    entry = {"name": "best_response", "params": junk}
+    with pytest.raises(ValueError, match="params"):
+        serve.validate_series(
+            series_payload(strategies={"A": entry, "B": {"name": "truthful"}})
+        )
+
+
+def test_validate_series_defaults_missing_strategy_params_to_empty():
+    entry = {"name": "best_response", "params": None}
+    valid = serve.validate_series(
+        series_payload(strategies={"A": entry, "B": {"name": "truthful"}})
+    )
+    assert valid["strategies"]["A"] == {"name": "best_response", "params": {}}
+
+
+# ----------------------------------------------------------- run_series_payload
+
+
+def test_run_series_payload_returns_a_series():
+    status, body = serve.run_series_payload(SERIES)
+    assert status == 200
+    assert len(body["rounds"]) == 4
+    assert body["rounds"][0]["trace"]["steps"][0]["label"] == "collect bids"
+    assert set(body["summary"]["bid_paths"]) == {"A", "B"}
+    assert body["strategies"]["A"]["name"] == "best_response"
+    json.dumps(body)
+
+
+def test_run_series_payload_reports_validation_errors_as_400():
+    status, body = serve.run_series_payload(series_payload(rounds=0))
+    assert status == 400
+    assert set(body) == {"error"}
+    assert f"between 1 and {MAX_ROUNDS}" in body["error"]
+
+
+def test_run_series_payload_reports_engine_errors_as_400():
+    status, body = serve.run_series_payload(series_payload(params={"reserve": -5}))
+    assert status == 400
+    assert "reserve" in body["error"]
+
+
+def test_run_series_payload_returns_500_when_a_mechanism_explodes(broken_mechanism):
+    status, body = serve.run_series_payload(series_payload(mechanism="broken", params={}))
+    assert status == 500
+    assert "mechanism exploded" in body["error"]
+    assert "RuntimeError" in body["traceback"]
+    json.dumps(body)
+
+
+def test_run_series_payload_never_raises_on_hostile_input():
+    hostile = [
+        None,
+        [],
+        "rounds",
+        series_payload(rounds={"n": 5}),
+        series_payload(strategies={"A": {"name": "best_response", "params": {"tick": -1}}}),
+        {"mechanism": "first_price", "bidders": bidders(2), "strategies": None},
+        {**SERIES, "bidders": [{"id": "A", "value": 10**400, "bid": 1}]},
+    ]
+    for body in hostile:
+        status, answer = serve.run_series_payload(body)
+        assert status in (400, 500), body
+        assert isinstance(answer["error"], str)
+        json.dumps(answer)
+
+
+def test_worst_case_series_finishes_before_a_learner_gives_up():
+    """50 rounds x 12 best-response bidders, each re-running the mechanism per candidate.
+
+    This is the compute ceiling of the endpoint and the reason the round cap exists.
+    ``english`` is the slowest of the four: its clock emits a step per bidder per rung,
+    and best_response pays that cost once per candidate bid. Measured at 0.66s against
+    0.24s for the sealed-bid mechanisms.
+    """
+    ids = [entry["id"] for entry in bidders(serve.MAX_BIDDERS)]
+    worst = {
+        "mechanism": "english",
+        "bidders": bidders(serve.MAX_BIDDERS),
+        "strategies": {i: {"name": "best_response"} for i in ids},
+        "rounds": MAX_ROUNDS,
+    }
+    started = time.perf_counter()
+    status, body = serve.run_series_payload(worst)
+    elapsed = time.perf_counter() - started
+    assert status == 200, body.get("error")
+    assert len(body["rounds"]) == MAX_ROUNDS
+    # Generous by design: the claim is "no learner thinks the page hung", not a benchmark,
+    # and CI machines are slower than the one this was measured on.
+    assert elapsed < 5, f"worst case took {elapsed:.2f}s"
+
+
 # --------------------------------------------------------------- static serving
 
 
@@ -381,6 +620,16 @@ def test_get_mechanisms_returns_the_registry_schema(client):
     assert set(as_json(raw)) == set(REGISTRY)
 
 
+def test_get_strategies_returns_the_strategy_schema(client):
+    status, headers, raw = fetch(client, "GET", "/strategies")
+    assert status == 200
+    assert headers["Content-Type"] == "application/json"
+    body = as_json(raw)
+    assert set(body) == set(STRATEGIES)
+    assert set(body["best_response"]) == {"name", "label", "description", "params"}
+    assert "tick" in body["best_response"]["params"]
+
+
 def test_get_root_serves_the_index(client):
     status, headers, raw = fetch(client, "GET", "/")
     assert status == 200
@@ -469,6 +718,29 @@ def test_post_without_content_length_is_refused(client):
     response = client.getresponse()
     assert response.status == 411
     assert "error" in json.loads(response.read().decode())
+
+
+def test_post_run_series_returns_a_series(client):
+    status, headers, raw = fetch(client, "POST", "/run_series", json.dumps(SERIES))
+    assert status == 200
+    assert headers["Content-Type"] == "application/json"
+    body = as_json(raw)
+    assert len(body["rounds"]) == 4
+    assert body["summary"]["bid_paths"]["A"][0] == 95
+
+
+def test_post_run_series_rejects_an_invalid_payload_with_400(client):
+    body = json.dumps(series_payload(rounds=99))
+    status, _, raw = fetch(client, "POST", "/run_series", body)
+    assert status == 400
+    assert f"between 1 and {MAX_ROUNDS}" in as_json(raw)["error"]
+
+
+def test_post_run_series_rejects_malformed_json_without_a_stack_trace(client):
+    status, _, raw = fetch(client, "POST", "/run_series", "{not json")
+    assert status == 400
+    assert "JSON" in as_json(raw)["error"]
+    assert "Traceback" not in as_json(raw)["error"]
 
 
 def test_post_unknown_route_is_a_json_404(client):

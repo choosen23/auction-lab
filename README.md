@@ -46,7 +46,8 @@ browser  --POST /run {mechanism, bidders, params}-->  engine
 | `agt/registry.py` | Mechanism registry, param schemas, `run()` |
 | `agt/stages.py` | Step generators shared across mechanisms |
 | `agt/mechanisms.py` | The five mechanisms |
-| `agt/serve.py` | stdlib HTTP server, request validation |
+| `agt/api.py` | Request validation and the JSON-in/JSON-out endpoint bodies |
+| `agt/serve.py` | stdlib HTTP server: routing, static files, byte caps |
 | `web/` | Renderer |
 
 ## Adding a mechanism
