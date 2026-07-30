@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auction walkthrough</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="app-head">
+  <h1>Auction walkthrough</h1>
+  <p class="sub">Run a mechanism, then step through it one stage at a time. Everything on the
+  right is drawn from the trace the engine emitted &mdash; nothing here knows what the
+  mechanisms are.</p>
+</header>
+
+<div class="layout">
+
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Left column: setup + stage list                                     -->
+  <!-- ------------------------------------------------------------------ -->
+  <aside class="col-side">
+
+    <section class="card" aria-labelledby="setup-h">
+      <h2 id="setup-h">Setup</h2>
+
+      <div class="field">
+        <label for="mechanism">Mechanism</label>
+        <select id="mechanism"></select>
+      </div>
+      <p class="mech-desc" id="mech-desc"></p>
+
+      <div class="params" id="params"></div>
+
+      <h3>Bidders</h3>
+      <div class="scroll-x">
+        <table class="bidder-table">
+          <thead>
+            <tr>
+              <th scope="col">Bidder</th>
+              <th scope="col">Value</th>
+              <th scope="col">Bid</th>
+              <th scope="col"><span class="visually-hidden">Remove</span></th>
+            </tr>
+          </thead>
+          <tbody id="bidder-rows"></tbody>
+        </table>
+      </div>
+      <button type="button" class="ghost" id="add-bidder">+ Add bidder</button>
+
+      <div class="run-row">
+        <button type="button" class="primary" id="run">Run auction</button>
+      </div>
+
+      <p class="error" id="setup-error" role="alert" hidden></p>
+    </section>
+
+    <section class="card" aria-labelledby="stages-h">
+      <h2 id="stages-h">Stages</h2>
+      <ol class="stage-list" id="stage-list">
+        <li class="stage-empty">Run an auction to see its stages.</li>
+      </ol>
+    </section>
+
+  </aside>
+
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Right column: the step being rendered                               -->
+  <!-- ------------------------------------------------------------------ -->
+  <main class="col-main">
+
+    <section class="card" aria-labelledby="step-h">
+      <div class="step-head">
+        <div>
+          <p class="step-count" id="step-count">No trace yet</p>
+          <h2 id="step-h" class="step-label">&mdash;</h2>
+        </div>
+        <span class="chip chip-stage" id="step-stage" hidden></span>
+      </div>
+
+      <p class="detail" id="step-detail">Press <strong>Run auction</strong> to walk through a mechanism.</p>
+      <pre class="formula" id="step-formula" hidden></pre>
+
+      <div class="transport" role="group" aria-label="Playback">
+        <button type="button" id="btn-reset" title="Back to the first step">&#x23EE; Reset</button>
+        <button type="button" id="btn-prev" title="Previous step (&larr;)">&larr; Prev</button>
+        <button type="button" id="btn-next" title="Next step (&rarr;)">Next &rarr;</button>
+        <button type="button" id="btn-play" class="primary" title="Auto-play (space)">&#x25B6; Play</button>
+        <span class="hint">&larr; &rarr; keys work too</span>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="chart-h">
+      <h2 id="chart-h">Bidders</h2>
+      <p class="caption">Each bidder's private <em>value</em> above their submitted <em>bid</em>;
+        the gap between the two bars is the shading.</p>
+
+      <div class="chips" id="state-chips"></div>
+      <div class="chart" id="chart"></div>
+      <ul class="legend" id="legend"></ul>
+
+      <details class="table-view" id="table-view">
+        <summary>Table view</summary>
+        <div class="scroll-x" id="chart-table"></div>
+      </details>
+    </section>
+
+    <section class="card" id="result-card" aria-labelledby="result-h" hidden>
+      <h2 id="result-h">Outcome</h2>
+      <div id="result-body"></div>
+    </section>
+
+  </main>
+</div>
+
+<!-- The tooltip only ever repeats what the mark's own aria-label and the table
+     view already carry, so it stays out of the accessibility tree. -->
+<div class="tooltip" id="tooltip" aria-hidden="true" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

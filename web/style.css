@@ -1,0 +1,386 @@
+/* ---------------------------------------------------------------------------
+   Auction walkthrough — styles.
+
+   Colour roles come from the dataviz reference palette. The chart uses a
+   two-shade ramp of ONE hue (blue) because value-vs-bid is a before/after pair
+   per bidder, not two independent identities. Both shade pairs were checked with
+   the palette validator in ordinal mode and pass in light and dark:
+
+     light  #86b6ef -> #2a78d6   (blue 250 -> blue 450, light end 2.06:1)
+     dark   #256abf -> #3987e5   (blue 500 -> blue 450-dark, light end 3.23:1)
+
+   The light end sits at ~2.1:1 against its surface, which is the documented
+   ordinal floor and carries a "relief required" obligation: every bar is
+   directly labelled AND repeated in the table view, so no value is colour-only.
+   --------------------------------------------------------------------------- */
+
+:root {
+  color-scheme: light;
+
+  --surface:    #fcfcfb;   /* card / chart surface */
+  --plane:      #f9f9f7;   /* page behind the cards */
+  --ink:        #0b0b0b;
+  --ink-2:      #52514e;
+  --ink-muted:  #898781;
+  --grid:       #e1e0d9;
+  --axis:       #c3c2b7;
+  --border:     rgba(11, 11, 11, 0.10);
+  --wash:       rgba(42, 120, 214, 0.07);  /* highlighted-row band */
+  --sunken:     #f2f1ed;                    /* formula block, chips */
+
+  --series-value: #86b6ef;   /* the lighter shade: what the item is worth to them */
+  --series-bid:   #2a78d6;   /* the stronger shade: what they actually bid */
+  --rule:         #6f6d67;   /* reference lines (reserve / price / clock ...) */
+
+  --good:     #0ca30c;
+  --critical: #d03b3b;
+
+  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --surface:   #1a1a19;
+    --plane:     #0d0d0d;
+    --ink:       #ffffff;
+    --ink-2:     #c3c2b7;
+    --ink-muted: #898781;
+    --grid:      #2c2c2a;
+    --axis:      #383835;
+    --border:    rgba(255, 255, 255, 0.10);
+    --wash:      rgba(57, 135, 229, 0.13);
+    --sunken:    #232322;
+
+    --series-value: #256abf;
+    --series-bid:   #3987e5;
+    --rule:         #a8a69e;
+
+    --good:     #0ca30c;
+    --critical: #e07070;
+  }
+}
+
+/* --------------------------------------------------------------- base ---- */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0 auto;
+  padding: 24px 20px 64px;
+  max-width: 1280px;
+  background: var(--plane);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+h2 { font-size: 14px; margin: 0 0 10px; letter-spacing: 0.02em; text-transform: uppercase; color: var(--ink-2); }
+h3 { font-size: 13px; margin: 18px 0 8px; color: var(--ink-2); }
+
+.app-head { margin-bottom: 18px; }
+.app-head .sub { margin: 0; max-width: 68ch; color: var(--ink-2); }
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+/* ------------------------------------------------------------- layout ---- */
+
+.layout {
+  display: grid;
+  /* minmax(0, …) on both tracks is what keeps a wide table or chart from
+     forcing the whole page to scroll sideways. */
+  grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+.col-side, .col-main { display: grid; gap: 18px; min-width: 0; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px 18px;
+  min-width: 0;
+}
+
+.scroll-x { overflow-x: auto; }
+
+/* ------------------------------------------------------------ controls --- */
+
+.field { display: grid; gap: 5px; }
+label { font-size: 12px; color: var(--ink-2); }
+
+select, input {
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--axis);
+  border-radius: 7px;
+  padding: 6px 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+input[type="number"] { font-variant-numeric: tabular-nums; }
+select:focus-visible, input:focus-visible, button:focus-visible, summary:focus-visible,
+.stage-list button:focus-visible {
+  outline: 2px solid var(--series-bid);
+  outline-offset: 2px;
+}
+
+button {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--axis);
+  border-radius: 7px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { background: var(--sunken); }
+button:disabled { opacity: 0.42; cursor: default; }
+
+button.primary {
+  background: var(--series-bid);
+  border-color: var(--series-bid);
+  color: #ffffff;
+  font-weight: 600;
+}
+button.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--series-bid); }
+
+button.ghost { border-style: dashed; color: var(--ink-2); width: 100%; margin-top: 8px; }
+
+.mech-desc { margin: 8px 0 0; color: var(--ink-2); font-size: 13px; }
+
+.params { display: grid; gap: 10px; margin-top: 14px; }
+.params .param-desc { margin: 2px 0 0; font-size: 12px; color: var(--ink-muted); }
+
+.run-row { margin-top: 16px; }
+.run-row button { width: 100%; padding: 9px 12px; }
+
+.error {
+  margin: 12px 0 0;
+  padding: 9px 11px;
+  border-radius: 7px;
+  border: 1px solid var(--critical);
+  background: color-mix(in srgb, var(--critical) 9%, transparent);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+/* -------------------------------------------------------- bidder table --- */
+
+table { border-collapse: collapse; width: 100%; }
+
+.bidder-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-muted);
+  padding: 0 6px 4px 0;
+}
+.bidder-table td { padding: 3px 6px 3px 0; }
+.bidder-table td:last-child, .bidder-table th:last-child { width: 30px; padding-right: 0; }
+.bidder-table .remove {
+  padding: 4px 8px;
+  line-height: 1;
+  color: var(--ink-muted);
+  border-color: transparent;
+}
+.bidder-table .remove:hover:not(:disabled) { color: var(--critical); border-color: var(--axis); }
+
+/* --------------------------------------------------------- stage list ---- */
+
+.stage-list { list-style: none; margin: 0; padding: 0; counter-reset: stage; }
+.stage-empty { color: var(--ink-muted); font-size: 13px; }
+
+.stage-list li + li { margin-top: 2px; }
+
+.stage-list button {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  text-align: left;
+  border: 1px solid transparent;
+  background: none;
+  padding: 6px 9px;
+  color: var(--ink-muted);
+}
+.stage-list button:hover { background: var(--sunken); }
+
+.stage-list .marker {
+  flex: none;
+  width: 1.5em;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+.stage-list .is-done button { color: var(--ink-2); }
+.stage-list .is-current button {
+  color: var(--ink);
+  font-weight: 600;
+  background: var(--wash);
+  border-color: color-mix(in srgb, var(--series-bid) 35%, transparent);
+}
+
+/* --------------------------------------------------------- step panel ---- */
+
+.step-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.step-count { margin: 0; font-size: 12px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.step-label { font-size: 20px; text-transform: none; letter-spacing: -0.01em; color: var(--ink); margin: 0; }
+
+.chip {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  color: var(--ink-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.chip-stage { font-family: var(--mono); }
+.chip .k { color: var(--ink-muted); }
+
+.detail { margin: 12px 0 0; max-width: 76ch; }
+
+.formula {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.transport { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; }
+.transport .hint { font-size: 12px; color: var(--ink-muted); margin-left: auto; }
+
+/* -------------------------------------------------------------- chart ---- */
+
+.caption { margin: -4px 0 12px; font-size: 13px; color: var(--ink-2); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.chips:empty { display: none; }
+/* A long id list (`ranked` with a dozen bidders) has to wrap inside the card
+   rather than push the page sideways. */
+.chips .chip { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+
+.chart svg { display: block; width: 100%; height: auto; }
+
+.chart .grid-line { stroke: var(--grid); stroke-width: 1; }
+.chart .axis-line { stroke: var(--axis); stroke-width: 1; }
+.chart .tick-label { fill: var(--ink-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart .rule-line { stroke: var(--rule); stroke-width: 1.5; }
+.chart .rule-label { fill: var(--ink-2); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.chart .row-band { fill: var(--wash); }
+.chart .name-label { fill: var(--ink-2); font-size: 12px; }
+.chart .bar-label { fill: var(--ink-2); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.chart .bar-value { fill: var(--series-value); }
+.chart .bar-bid   { fill: var(--series-bid); }
+
+/* The payment notch: a 2px surface gap doing the separating, then a thin tick. */
+.chart .pay-gap  { stroke: var(--surface); stroke-width: 4; }
+.chart .pay-tick { stroke: var(--ink-2); stroke-width: 2; }
+
+/* Emphasis, not a second palette: unhighlighted rows recede but stay readable,
+   and the two shades must still separate after they are dimmed. */
+.chart .row.is-dim .bar-value,
+.chart .row.is-dim .bar-bid { opacity: 0.5; }
+.chart .row.is-dim .name-label,
+.chart .row.is-dim .bar-label { fill: var(--ink-muted); }
+
+.chart .row.is-marked .name-label { fill: var(--ink); font-weight: 600; }
+
+.chart .hit { fill: transparent; }
+.chart .row:hover .bar-value, .chart .row:hover .bar-bid { filter: brightness(1.1); }
+.chart .hit:focus-visible { outline: 2px solid var(--series-bid); outline-offset: -2px; }
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.legend li { display: flex; align-items: center; gap: 7px; }
+.legend .swatch { width: 14px; height: 10px; border-radius: 2px; flex: none; }
+.legend .key-line { width: 14px; height: 0; border-top: 2px solid var(--rule); flex: none; }
+.legend .key-tick { width: 2px; height: 12px; background: var(--ink-2); flex: none; }
+.legend .key-glyph { color: var(--ink); flex: none; }
+
+/* --------------------------------------------------------- table view ---- */
+
+.table-view { margin-top: 14px; }
+.table-view summary { cursor: pointer; font-size: 12px; color: var(--ink-2); }
+
+.data-table { margin-top: 10px; font-size: 13px; }
+.data-table th, .data-table td {
+  padding: 5px 12px 5px 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.data-table th:first-child, .data-table td:first-child { text-align: left; }
+.data-table thead th { font-size: 11px; font-weight: 500; color: var(--ink-muted); }
+.data-table .neg { color: var(--critical); }
+
+/* ------------------------------------------------------------- result ---- */
+
+.stat-row { display: flex; flex-wrap: wrap; gap: 10px 32px; margin-bottom: 6px; }
+.stat { min-width: 88px; }
+.stat .stat-label { display: block; font-size: 12px; color: var(--ink-2); }
+.stat .stat-value { display: block; font-size: 26px; font-weight: 600; letter-spacing: -0.02em; }
+.stat .stat-value.hero { font-size: 40px; }
+.stat .stat-value.muted { color: var(--ink-2); font-size: 22px; }
+
+.badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.badge.is-good { color: var(--good); }
+.badge.is-bad  { color: var(--critical); }
+
+.note { margin: 10px 0 0; color: var(--ink-2); font-size: 13px; }
+
+/* ------------------------------------------------------------ tooltip ---- */
+
+.tooltip {
+  position: fixed;
+  z-index: 20;
+  pointer-events: none;
+  min-width: 132px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--axis);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16);
+  font-size: 12px;
+}
+.tooltip .tt-head { font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+.tooltip .tt-row { display: flex; align-items: center; gap: 7px; }
+.tooltip .tt-key { color: var(--ink-2); margin-right: auto; }
+.tooltip .tt-val { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.tooltip .tt-line { width: 12px; height: 0; border-top: 2px solid currentColor; flex: none; }
