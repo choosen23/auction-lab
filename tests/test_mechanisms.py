@@ -3,9 +3,47 @@ import random
 import pytest
 
 from agt.mechanisms import REGISTRY, mechanism, registry_schema, run
+from agt.packages import PackageBid
 from agt.trace import Bidder
 
 BIDDERS = [Bidder("A", 100, 95), Bidder("B", 72, 72), Bidder("C", 41, 41)]
+
+# The same three bidders, said in the language a package mechanism declares: one
+# all-or-nothing bundle each, on items nobody else wants. Who is in the room and what
+# they offered is unchanged, so an invariant that holds of `BIDDERS` under a single-item
+# mechanism has to hold of these under a package one.
+PACKAGES = [
+    PackageBid("A", ("north",), 100, 95),
+    PackageBid("B", ("south",), 72, 72),
+    PackageBid("C", ("east",), 41, 41),
+]
+
+
+def entrants_for(name):
+    """The input whichever kind `name` declares expects.
+
+    The cross-mechanism invariants are parametrized over the whole registry, so they have
+    to build the shape each mechanism takes. Dropping the package mechanisms from the
+    parametrization instead would leave them untested.
+    """
+    return PACKAGES if REGISTRY[name].input_kind == "package" else BIDDERS
+
+
+def who_of(entrant):
+    """The bidder id on a record of either input kind."""
+    return entrant.bidder if isinstance(entrant, PackageBid) else entrant.id
+
+
+def offers(entrants):
+    """bidder id -> the most that bidder offered, whichever input kind these are.
+
+    Under XOR a bidder may submit several bundles but wins at most one, so the largest
+    bid they submitted is the ceiling on what any mechanism may charge them.
+    """
+    top = {}
+    for e in entrants:
+        top[who_of(e)] = max(top.get(who_of(e), e.bid), e.bid)
+    return top
 
 
 def test_second_price_winner_pays_second_bid():
@@ -145,11 +183,61 @@ def test_registry_schema_publishes_the_truthfulness_flag():
     assert payload["first_price"]["truthful_dominant"] is False
 
 
+def test_every_mechanism_declares_its_input_kind():
+    """What a mechanism takes is a fact about the mechanism, so the mechanism owns it —
+    the setup form switches on this rather than on a list of names kept in JavaScript."""
+    for name, spec in REGISTRY.items():
+        assert spec.input_kind in ("single", "package"), f"{name}: {spec.input_kind!r}"
+    assert REGISTRY["second_price"].input_kind == "single"
+    assert REGISTRY["gsp"].input_kind == "single", "position auctions take scalar bids"
+    assert REGISTRY["greedy_package"].input_kind == "package"
+    assert REGISTRY["vcg_package"].input_kind == "package"
+
+
+def test_package_mechanisms_live_in_the_shared_registry():
+    """One registry, so a package mechanism inherits every cross-mechanism invariant
+    below instead of being tested by a private copy of them."""
+    assert {"greedy_package", "vcg_package"} <= set(REGISTRY)
+
+
+def test_registry_schema_publishes_the_input_kind():
+    import json
+
+    payload = json.loads(json.dumps(registry_schema()))
+    assert payload["second_price"]["input_kind"] == "single"
+    assert payload["vcg_package"]["input_kind"] == "package"
+
+
+def test_a_package_mechanism_handed_scalar_bidders_names_the_kind_it_wanted():
+    with pytest.raises(ValueError, match="packages"):
+        run("vcg_package", BIDDERS)
+
+
+def test_a_single_item_mechanism_handed_packages_names_the_kind_it_wanted():
+    with pytest.raises(ValueError, match="bidders"):
+        run("second_price", PACKAGES)
+
+
+def test_a_package_mechanism_refuses_an_empty_bid_list():
+    with pytest.raises(ValueError, match="at least one package bid"):
+        run("greedy_package", [])
+
+
+def test_one_bidder_may_submit_several_package_bids():
+    """XOR: repeated ids are legal here, unlike the single-item kind where they would
+    silently collapse in `payments`. The engine must not import that guard wholesale."""
+    t = run(
+        "vcg_package",
+        [PackageBid("A", ("north",), 9, 9), PackageBid("A", ("south",), 8, 8)],
+    )
+    assert t.result["allocation"] == {"A": ["north"]}
+
+
 def test_trace_is_json_serializable_for_every_mechanism():
     import json
 
     for name in REGISTRY:
-        json.dumps(run(name, BIDDERS).to_dict())
+        json.dumps(run(name, entrants_for(name)).to_dict())
 
 
 @pytest.mark.parametrize("name", ["first_price", "second_price", "all_pay"])
@@ -305,14 +393,16 @@ def test_clock_steps_teach_the_equivalence(name, equivalence):
 TOL = 1e-9
 
 
-def gains_of(result, bidders):
+def gains_of(result, entrants):
     """Gross value each bidder received, whichever way the mechanism reported it."""
     if "gains" in result:
         return result["gains"]
-    return {b.id: (b.value if b.id == result["winner"] else 0) for b in bidders}
+    return {
+        who_of(e): (e.value if who_of(e) == result["winner"] else 0) for e in entrants
+    }
 
 
-def winners_of(result, bidders):
+def winners_of(result, entrants):
     """Everybody who received something, best first."""
     if "allocation" in result:
         return list(result["allocation"])
@@ -321,22 +411,40 @@ def winners_of(result, bidders):
 
 @pytest.mark.parametrize("name", sorted(REGISTRY))
 def test_invariants_hold(name):
-    t = run(name, BIDDERS)
+    entrants = entrants_for(name)
+    t = run(name, entrants)
     r = t.result
-    gains = gains_of(r, BIDDERS)
+    gains = gains_of(r, entrants)
     assert r["revenue"] == pytest.approx(sum(r["payments"].values()))
-    for b in BIDDERS:
-        assert r["utilities"][b.id] == pytest.approx(gains[b.id] - r["payments"][b.id])
+    for who in offers(entrants):
+        assert r["utilities"][who] == pytest.approx(gains[who] - r["payments"][who])
     assert r["welfare"] == pytest.approx(sum(gains.values()))
     assert sum(r["utilities"].values()) == pytest.approx(r["welfare"] - r["revenue"])
     assert t.steps, "a mechanism must emit at least one step"
     assert t.steps[-1].state["winner"] == r["winner"]
-    assert winners_of(r, BIDDERS)[:1] == [r["winner"]], "the result names its own top winner"
+    assert winners_of(r, entrants)[:1] == [r["winner"]], (
+        "the result names its own top winner"
+    )
 
 
 @pytest.mark.parametrize("name", sorted(REGISTRY))
 def test_invariants_hold_under_a_blocking_reserve(name):
-    t = run(name, BIDDERS, {"reserve": 200})
+    """A reserve above every bid must block the sale outright — and a mechanism with no
+    reserve must refuse the parameter rather than accept it and quietly ignore it.
+
+    Which half applies is read off the declared params schema, not off a list of names.
+    Combinatorial reserve prices are out of scope for phase 3, so the package mechanisms
+    declare none and there is no blocking price to set for them; refusing the parameter
+    is the strongest thing that can honestly be asserted, and it is worth asserting,
+    because swallowing a reserve silently would tell a learner their floor applied when
+    it did not.
+    """
+    entrants = entrants_for(name)
+    if "reserve" not in REGISTRY[name].params:
+        with pytest.raises(ValueError, match="unknown parameter 'reserve'"):
+            run(name, entrants, {"reserve": 200})
+        return
+    t = run(name, entrants, {"reserve": 200})
     r = t.result
     assert r["winner"] is None
     assert r["revenue"] == 0
@@ -347,12 +455,14 @@ def test_invariants_hold_under_a_blocking_reserve(name):
 @pytest.mark.parametrize("name", sorted(REGISTRY))
 def test_nobody_ever_pays_more_than_they_bid(name):
     """A bid is a ceiling on what you can be charged — for the winner, for the losers an
-    all-pay auction still bills, and for every holder of a slot in a multi-slot one."""
-    t = run(name, BIDDERS)
-    for b in BIDDERS:
-        assert t.result["payments"][b.id] <= b.bid + TOL, f"{name}: {b.id} overcharged"
-    winner_bid = next(b.bid for b in BIDDERS if b.id == t.result["winner"])
-    assert t.result["price"] <= winner_bid + TOL
+    all-pay auction still bills, for every holder of a slot in a multi-slot one, and for
+    the holder of a bundle in a combinatorial one."""
+    entrants = entrants_for(name)
+    t = run(name, entrants)
+    top = offers(entrants)
+    for who, offered in top.items():
+        assert t.result["payments"][who] <= offered + TOL, f"{name}: {who} overcharged"
+    assert t.result["price"] <= top[t.result["winner"]] + TOL
 
 
 @pytest.mark.parametrize("name", ["second_price", "english", "vcg_positions"])
@@ -390,31 +500,55 @@ def test_truthful_bidding_is_dominant_under_a_reserve(name):
             )
 
 
+def random_entrants(name, rng):
+    """Random input of whichever kind `name` declares, and params to run it with."""
+    if REGISTRY[name].input_kind == "package":
+        # Well inside the solver's 12-item/20-bid guard, with overlapping bundles and
+        # repeated bidders so both feasibility constraints get exercised. Package
+        # mechanisms declare no params at all, so there are none to randomize.
+        items = ["north", "south", "east", "west"]
+        return [
+            PackageBid(
+                rng.choice("ABC"),
+                tuple(sorted(rng.sample(items, rng.randint(1, 3)))),
+                v := rng.randint(0, 100),
+                v,
+            )
+            for _ in range(rng.randint(1, 7))
+        ], {}
+
+    bidders = [
+        Bidder(chr(65 + j), rng.randint(0, 100), rng.randint(0, 100))
+        for j in range(rng.randint(1, 6))
+    ]
+    params: dict = {"reserve": rng.choice([0, rng.randint(0, 120)])}
+    if "start" in REGISTRY[name].params:
+        # A clock start is only coherent at or above both the top bid and the
+        # reserve; anything lower must be rejected, which is asserted separately.
+        floor = max(max(b.bid for b in bidders), params["reserve"])
+        params["start"] = rng.choice([None, floor, floor + rng.randint(0, 50)])
+    if "slots" in REGISTRY[name].params:
+        params["slots"] = rng.randint(1, 4)
+        params["ctr_decay"] = rng.choice([0, 0.5, 0.9, 1])
+    return bidders, params
+
+
 @pytest.mark.parametrize("name", sorted(REGISTRY))
 def test_random_input_produces_a_wellformed_trace(name):
-    """Registry contract: any registered mechanism survives arbitrary bidders."""
+    """Registry contract: any registered mechanism survives arbitrary input of the kind
+    it declares — scalar bidders for a single-item auction, package bids for a
+    combinatorial one."""
     import json
 
     rng = random.Random(7)
     for _ in range(100):
-        bidders = [
-            Bidder(chr(65 + j), rng.randint(0, 100), rng.randint(0, 100))
-            for j in range(rng.randint(1, 6))
-        ]
-        reserve = rng.choice([0, rng.randint(0, 120)])
-        params: dict = {"reserve": reserve}
-        if "start" in REGISTRY[name].params:
-            # A clock start is only coherent at or above both the top bid and the
-            # reserve; anything lower must be rejected, which is asserted separately.
-            floor = max(max(b.bid for b in bidders), reserve)
-            params["start"] = rng.choice([None, floor, floor + rng.randint(0, 50)])
-        if "slots" in REGISTRY[name].params:
-            params["slots"] = rng.randint(1, 4)
-            params["ctr_decay"] = rng.choice([0, 0.5, 0.9, 1])
-        t = run(name, bidders, params)
+        entrants, params = random_entrants(name, rng)
+        reserve = params.get("reserve", 0)
+        t = run(name, entrants, params)
         json.dumps(t.to_dict())
         r = t.result
-        gains = gains_of(r, bidders)
+        gains = gains_of(r, entrants)
+        top = offers(entrants)
         assert r["revenue"] == pytest.approx(sum(r["payments"].values()))
         assert r["welfare"] == pytest.approx(sum(gains.values()))
         assert t.steps and t.steps[-1].state["winner"] == r["winner"]
@@ -423,17 +557,14 @@ def test_random_input_produces_a_wellformed_trace(name):
             assert s.highlight["stage"] and isinstance(s.highlight["bidders"], list)
             assert "bids" in s.state
         if r["winner"] is None:
-            assert max(b.bid for b in bidders) < reserve
+            assert max(top.values()) < reserve
             assert r["revenue"] == 0
-            assert not winners_of(r, bidders)
+            assert not winners_of(r, entrants)
         else:
-            for who in winners_of(r, bidders):
-                won = next(b for b in bidders if b.id == who)
-                assert won.bid >= reserve
-                assert r["payments"][who] <= won.bid + TOL
-            assert r["price"] <= next(
-                b.bid for b in bidders if b.id == r["winner"]
-            ) + TOL
+            for who in winners_of(r, entrants):
+                assert top[who] >= reserve
+                assert r["payments"][who] <= top[who] + TOL
+            assert r["price"] <= top[r["winner"]] + TOL
 
 
 @pytest.mark.parametrize(

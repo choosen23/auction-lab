@@ -9,19 +9,22 @@ import random
 
 import pytest
 
+from agt.mechanisms import REGISTRY, run
 from agt.packages import (
     MAX_BIDS,
     MAX_ITEMS,
-    PACKAGE_REGISTRY,
     PackageBid,
     greedy_allocate,
     item_universe,
     optimal_allocate,
-    run_packages,
     total_bid,
 )
 
 TOL = 1e-9
+
+# Read off the shared registry rather than listed by hand, so a third package mechanism
+# is covered by everything below the moment it declares its input kind.
+PACKAGE_MECHANISMS = sorted(n for n, m in REGISTRY.items() if m.input_kind == "package")
 
 # Two spectrum licences. A wants them only as a pair; B and C each want one.
 # Greedy takes A's 10 first and is then blocked; B + C together are worth 12.
@@ -294,8 +297,8 @@ def test_greedy_package_rewards_shading():
     licence — greedy still ranks A first — and keeps 6, because under this rule the
     winner pays their own bid and nothing else in the auction constrains it.
     """
-    honest = run_packages("greedy_package", SHADEABLE)
-    deviant = run_packages("greedy_package", shaded(SHADEABLE, "A", 0.4))
+    honest = run("greedy_package", SHADEABLE)
+    deviant = run("greedy_package", shaded(SHADEABLE, "A", 0.4))
 
     assert honest.result["allocation"]["A"] == ["north"]
     assert honest.result["payments"]["A"] == 10
@@ -310,9 +313,9 @@ def test_greedy_package_rewards_shading():
 
 def test_vcg_package_closes_that_deviation():
     """The same bidders, the same lie, and under VCG it buys nothing at all."""
-    honest = run_packages("vcg_package", SHADEABLE)
-    deviant = run_packages("vcg_package", shaded(SHADEABLE, "A", 0.4))
-    underbid = run_packages("vcg_package", shaded(SHADEABLE, "A", 0.2))
+    honest = run("vcg_package", SHADEABLE)
+    deviant = run("vcg_package", shaded(SHADEABLE, "A", 0.4))
+    underbid = run("vcg_package", shaded(SHADEABLE, "A", 0.2))
 
     assert honest.result["payments"]["A"] == 3, "A pays what B would have got, no more"
     assert honest.result["utilities"]["A"] == 7
@@ -337,9 +340,9 @@ def test_vcg_package_is_truthful_on_small_instances():
                 bundle = tuple(sorted(rng.sample(items, rng.randint(1, 2))))
                 v = rng.randint(1, 20)
                 bids.append(PackageBid(who_, bundle, v, v))
-        honest = run_packages("vcg_package", bids).result["utilities"]["A"]
+        honest = run("vcg_package", bids).result["utilities"]["A"]
         for factor in (0, 0.5, 1.5, 3):
-            deviant = run_packages("vcg_package", shaded(bids, "A", factor))
+            deviant = run("vcg_package", shaded(bids, "A", factor))
             assert deviant.result["utilities"]["A"] <= honest + TOL, (
                 f"bids={bids} factor={factor} beat truthful bidding"
             )
@@ -360,7 +363,7 @@ def test_vcg_package_never_charges_more_than_the_winning_bid():
             )
             for _ in range(rng.randint(1, 6))
         ]
-        result = run_packages("vcg_package", bids).result
+        result = run("vcg_package", bids).result
         won = {b.bidder: b.bid for b in optimal_allocate(bids)}
         for bidder, paid in result["payments"].items():
             assert paid >= -TOL
@@ -373,7 +376,7 @@ def test_vcg_package_never_charges_more_than_the_winning_bid():
 def test_both_mechanisms_report_what_greedy_costs():
     """The gap is the point of running two solvers, so both mechanisms carry it."""
     for name in ("greedy_package", "vcg_package"):
-        result = run_packages(name, PINNED).result
+        result = run(name, PINNED).result
         assert result["greedy_welfare"] == 10
         assert result["optimal_welfare"] == 12
         assert result["welfare_gap"] == 2, f"{name} must report the 2 greedy gave up"
@@ -381,7 +384,7 @@ def test_both_mechanisms_report_what_greedy_costs():
 
 def test_the_gap_is_zero_when_greedy_finds_the_optimum():
     for name in ("greedy_package", "vcg_package"):
-        result = run_packages(name, COMPLEMENTS).result
+        result = run(name, COMPLEMENTS).result
         assert result["welfare_gap"] == 0
         assert result["greedy_welfare"] == result["optimal_welfare"] == 10
 
@@ -389,7 +392,7 @@ def test_the_gap_is_zero_when_greedy_finds_the_optimum():
 def test_a_bundle_beats_two_singles_worth_less_apart():
     """Complementarities: the pair is worth 10 and the halves 4 each, so selling them
     separately would destroy value — which only a package bid can express."""
-    result = run_packages("vcg_package", COMPLEMENTS).result
+    result = run("vcg_package", COMPLEMENTS).result
     assert result["allocation"] == {"A": ["north", "south"]}
     assert result["payments"]["A"] == 8, "A pays what B and C together would have got"
     assert result["utilities"]["A"] == 2
@@ -398,8 +401,8 @@ def test_a_bundle_beats_two_singles_worth_less_apart():
 
 def test_greedy_allocation_is_inefficient_on_the_pinned_case():
     """The gap is not bookkeeping: greedy really does misallocate the licences."""
-    greedy = run_packages("greedy_package", PINNED).result
-    vcg = run_packages("vcg_package", PINNED).result
+    greedy = run("greedy_package", PINNED).result
+    vcg = run("vcg_package", PINNED).result
 
     assert greedy["allocation"] == {"A": ["north", "south"]}
     assert greedy["welfare"] == 10
@@ -419,13 +422,13 @@ def test_greedy_allocation_is_inefficient_on_the_pinned_case():
 def test_vcg_says_out_loud_that_truthfulness_needs_the_optimal_allocation():
     """The trap this mechanism exists to name: VCG payments are only truthful on top of
     an optimal allocation, so running them over the greedy one silently breaks it."""
-    details = " ".join(s.detail for s in run_packages("vcg_package", PINNED).steps)
+    details = " ".join(s.detail for s in run("vcg_package", PINNED).steps)
     assert "optimal" in details and "truthful" in details
     assert "greedy" in details.lower()
 
 
 def test_greedy_says_out_loud_that_it_is_an_approximation():
-    details = " ".join(s.detail for s in run_packages("greedy_package", PINNED).steps)
+    details = " ".join(s.detail for s in run("greedy_package", PINNED).steps)
     assert "optimal" in details
     assert "own bid" in details
 
@@ -434,18 +437,21 @@ def test_greedy_says_out_loud_that_it_is_an_approximation():
 
 
 def test_every_package_mechanism_declares_whether_truth_is_dominant():
-    assert PACKAGE_REGISTRY["vcg_package"].truthful_dominant is True
-    assert PACKAGE_REGISTRY["greedy_package"].truthful_dominant is False
+    assert REGISTRY["vcg_package"].truthful_dominant is True
+    assert REGISTRY["greedy_package"].truthful_dominant is False
 
 
 def test_traces_are_wellformed_and_json_safe():
-    """The same contract every single-item mechanism is held to, so these two are ready
-    to be moved into the shared registry without a surprise."""
+    """The same contract every single-item mechanism is held to, over inputs shaped the
+    way only a package auction can be — repeated bidders, overlapping bundles. The
+    cross-mechanism invariants in `tests/test_mechanisms.py` now cover these two as well,
+    since they are registered alongside everything else; this stays because it hammers
+    the shapes those invariants only sample."""
     import json
 
     rng = random.Random(29)
     items = ["north", "south", "east", "west"]
-    for name in sorted(PACKAGE_REGISTRY):
+    for name in PACKAGE_MECHANISMS:
         for _ in range(60):
             bids = [
                 PackageBid(
@@ -456,7 +462,7 @@ def test_traces_are_wellformed_and_json_safe():
                 )
                 for _ in range(rng.randint(1, 7))
             ]
-            trace = run_packages(name, bids)
+            trace = run(name, bids)
             json.dumps(trace.to_dict())
             r = trace.result
             assert trace.steps
@@ -474,22 +480,24 @@ def test_traces_are_wellformed_and_json_safe():
 
 
 def test_an_unknown_package_mechanism_is_refused_by_name():
-    with pytest.raises(ValueError, match="unknown package mechanism"):
-        run_packages("nope", PINNED)
+    """One registry, so one unknown-mechanism message, listing every name there is."""
+    with pytest.raises(ValueError, match="unknown mechanism 'nope'"):
+        run("nope", PINNED)
 
 
 def test_running_with_no_bids_is_refused():
     with pytest.raises(ValueError, match="at least one package bid"):
-        run_packages("greedy_package", [])
+        run("greedy_package", [])
 
 
 def test_greedy_package_inherits_the_size_guard_because_it_reports_the_gap():
     """Greedy alone has no limit, but the mechanism shows the gap, and showing a gap
-    means solving the optimal side too. Task 7 has to surface this as a 400, not a 500."""
+    means solving the optimal side too. `agt.api` bounds the payload at the same numbers
+    so a learner meets this as a 400 rather than as a crash."""
     bids = [PackageBid(f"b{i}", (f"item{i}",), 1, 1) for i in range(MAX_BIDS + 1)]
-    for name in sorted(PACKAGE_REGISTRY):
+    for name in PACKAGE_MECHANISMS:
         with pytest.raises(ValueError, match="NP-hard"):
-            run_packages(name, bids)
+            run(name, bids)
 
 
 def test_a_run_at_exactly_the_bound_still_succeeds():
@@ -497,8 +505,8 @@ def test_a_run_at_exactly_the_bound_still_succeeds():
         PackageBid(f"b{i}", (f"item{i % MAX_ITEMS}",), 100 - i, 100 - i)
         for i in range(MAX_BIDS)
     ]
-    for name in sorted(PACKAGE_REGISTRY):
-        assert run_packages(name, bids).result["welfare_gap"] >= 0
+    for name in PACKAGE_MECHANISMS:
+        assert run(name, bids).result["welfare_gap"] >= 0
 
 
 def test_the_pruned_search_agrees_with_naive_enumeration():

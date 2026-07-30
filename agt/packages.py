@@ -2,7 +2,10 @@
 
 The bid language and the two winner-determination solvers live in
 :mod:`agt.winner_determination` and are re-exported here, so ``agt.packages`` stays the
-one place a package auction is reached from.
+one place a package auction is *defined*. Running one goes through
+:func:`agt.registry.run` like every other mechanism: these two declare
+``input_kind="package"`` and are handed a list of :class:`PackageBid` where a single-item
+auction is handed a list of :class:`~agt.trace.Bidder`, and nothing else differs.
 
 The pair of mechanisms below differ in a single decision — which allocation to charge for
 — and everything else follows. ``greedy_package`` bills each winner their own bid on the
@@ -14,13 +17,13 @@ same formula stops being truthful, which is a real trap in practice rather than 
 footnote, and the step text says so out loud.
 """
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import replace
 from typing import Any
 
-from agt.registry import Mechanism
+from agt.registry import mechanism
 from agt.stages import num
-from agt.trace import Bidder, Number, Step, Trace, outcome_allocation, step
+from agt.trace import Number, Step, outcome_allocation, step
 from agt.winner_determination import (
     MAX_BIDS,
     MAX_ITEMS,
@@ -37,18 +40,14 @@ from agt.winner_determination import (
 __all__ = [
     "MAX_BIDS",
     "MAX_ITEMS",
-    "PACKAGE_REGISTRY",
     "PackageBid",
     "greedy_allocate",
     "greedy_package",
     "item_universe",
     "optimal_allocate",
-    "run_packages",
     "total_bid",
     "vcg_package",
 ]
-
-PackageFn = Callable[[list[PackageBid]], Iterator[Step]]
 
 # =====================================================================================
 # The two mechanisms.
@@ -57,24 +56,11 @@ PackageFn = Callable[[list[PackageBid]], Iterator[Step]]
 # follows from it. `greedy_package` takes the practical allocation and bills each winner
 # their own bid. `vcg_package` pays for the exhaustive search and can then charge
 # externalities, which is the only reason its truthfulness guarantee holds.
+#
+# Both register into the one shared REGISTRY with `input_kind="package"`, so they are
+# driven by `agt.registry.run` like everything else and inherit every cross-mechanism
+# invariant the single-item auctions are held to.
 # =====================================================================================
-
-
-def _participants(bids: Bids) -> list[Bidder]:
-    """One :class:`~agt.trace.Bidder` per bidder id, so the shared scoring code has
-    something to key its dicts by.
-
-    ponytail: reusing the single-item record as a carrier rather than widening
-    ``outcome_allocation`` to know about packages. Only ``id`` is ever read off these;
-    ``value`` and ``bid`` are filled from that bidder's highest package bid purely so the
-    record is not a lie. Ceiling: a package bidder has no one scalar value, so do not
-    read those two fields. Upgrade: task 7 gives the trace a declared package input kind.
-    """
-    top: dict[str, PackageBid] = {}
-    for b in bids:
-        if b.bidder not in top or b.bid > top[b.bidder].bid:
-            top[b.bidder] = b
-    return [Bidder(name, b.value, b.bid) for name, b in top.items()]
 
 
 def _best_value_welfare(bids: Bids) -> Number:
@@ -175,8 +161,8 @@ def _settle(
     detail: str,
 ) -> Iterator[Step]:
     """Terminal stage: total the bill and score the allocation, gap included."""
-    people = _participants(bids)
-    state["payments"] = {p.id: payments.get(p.id, 0) for p in people}
+    people = _names(bids)
+    state["payments"] = {who: payments.get(who, 0) for who in people}
     state["winner"] = accepted[0].bidder if accepted else None
     total = sum(payments.values())
     terms = [num(payments[b.bidder]) for b in accepted if payments.get(b.bidder, 0)]
@@ -203,37 +189,13 @@ def _settle(
     }
 
 
-PACKAGE_REGISTRY: dict[str, Mechanism] = {}
-
-
-def _package_mechanism(
-    name: str, *, label: str, description: str, truthful_dominant: bool
-) -> Any:
-    """Register a package mechanism, declaring the same facts ``@mechanism`` demands.
-
-    ponytail: a second registry rather than an entry in the shared one, because the
-    cross-mechanism invariant tests are parametrized over every name in ``REGISTRY`` and
-    feed it scalar bidders and a reserve — a package mechanism registered there today
-    would fail four of them for the right reason. Ceiling: the UI cannot see these yet.
-    Upgrade: task 7 adds ``input_kind`` to ``Mechanism``, merges this dict into
-    ``REGISTRY``, and teaches those invariants to build the input each kind expects.
-    """
-
-    def decorate(fn: PackageFn) -> PackageFn:
-        PACKAGE_REGISTRY[name] = Mechanism(
-            name, label, description, {}, fn, truthful_dominant
-        )
-        return fn
-
-    return decorate
-
-
-@_package_mechanism(
+@mechanism(
     "greedy_package",
     label="Greedy combinatorial auction",
     description="Bids are accepted in descending order, skipping conflicts; "
     "each winner pays their own bid. Practical, not truthful.",
     truthful_dominant=False,
+    input_kind="package",
 )
 def greedy_package(bids: list[PackageBid]) -> Iterator[Step]:
     state: dict[str, Any] = {
@@ -315,12 +277,13 @@ def greedy_package(bids: list[PackageBid]) -> Iterator[Step]:
     )
 
 
-@_package_mechanism(
+@mechanism(
     "vcg_package",
     label="VCG combinatorial auction",
     description="The best allocation is solved for exactly, then each winner is charged "
     "the welfare the others lose by their presence. Truthful.",
     truthful_dominant=True,
+    input_kind="package",
 )
 def vcg_package(bids: list[PackageBid]) -> Iterator[Step]:
     state: dict[str, Any] = {
@@ -403,33 +366,3 @@ def vcg_package(bids: list[PackageBid]) -> Iterator[Step]:
             "pays nothing at all.",
         )
     )
-
-
-def run_packages(name: str, bids: list[PackageBid]) -> Trace:
-    """Run a package mechanism to completion and return its :class:`~agt.trace.Trace`.
-
-    ponytail: a second driver beside ``registry.run`` rather than a widened one, because
-    ``run`` validates scalar bidder ids and resolves a params schema, and neither applies
-    here yet. Ceiling: the ``Trace.bidders`` slot carries :class:`PackageBid` records,
-    which serialize fine but are not the declared type. Upgrade: task 7 folds this into
-    ``run`` behind the declared input kind.
-    """
-    if name not in PACKAGE_REGISTRY:
-        raise ValueError(
-            f"unknown package mechanism {name!r}; "
-            f"expected one of {sorted(PACKAGE_REGISTRY)}"
-        )
-    if not bids:
-        raise ValueError("at least one package bid is required")
-
-    generator = PACKAGE_REGISTRY[name].fn(list(bids))
-    steps: list[Step] = []
-    while True:
-        try:
-            steps.append(next(generator))
-        except StopIteration as stop:
-            result = stop.value
-            break
-    if result is None:
-        raise ValueError(f"mechanism {name!r} finished without returning a result")
-    return Trace(name, {}, list(bids), steps, result)

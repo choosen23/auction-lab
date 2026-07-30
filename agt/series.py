@@ -84,6 +84,7 @@ def run_series(
         raise ValueError(
             f"unknown mechanism {mechanism!r}; expected one of {sorted(REGISTRY)}"
         )
+    refuse_repeated_rounds(mechanism)
     if isinstance(rounds, bool) or not isinstance(rounds, int):
         raise ValueError(f"rounds must be a whole number, got {rounds!r}")
     if not 1 <= rounds <= MAX_ROUNDS:
@@ -119,6 +120,30 @@ def run_series(
         history.append(observe(index, trace))
 
     return Series(mechanism, resolved, plan, records, _summarize(records, tolerance))
+
+
+def refuse_repeated_rounds(mechanism: str) -> None:
+    """Refuse a mechanism whose input is not one scalar bid per bidder per round.
+
+    Every strategy in :mod:`agt.strategies` answers a single question — what number
+    should I bid — and a bidder submitting XOR bundles has no such number: their strategy
+    space is which bundles to name and what to offer for each, which is a different
+    problem with different equilibria. Faking a scalar out of a bundle would draw a bid
+    path and a convergence verdict that mean nothing, so the answer is no and why.
+
+    Lives here rather than only in :mod:`agt.api` because the engine is meant to run
+    under Pyodide with no server in front of it, and :func:`agt.api.validate_series`
+    calls it so the reason arrives before a complaint about the wrong payload key.
+    """
+    spec = REGISTRY[mechanism]
+    if spec.input_kind == "single":
+        return
+    raise ValueError(
+        f"{spec.label} ({mechanism}) takes package bids, and repeated rounds are only "
+        "defined for single-item mechanisms: a strategy picks one number per round, and "
+        "a bidder offering all-or-nothing bundles has no one number to pick. Run it as a "
+        "single auction instead."
+    )
 
 
 def _plan(

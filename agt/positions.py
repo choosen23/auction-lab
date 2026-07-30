@@ -192,7 +192,7 @@ def _unsold(
         bidders=[],
     )
     return outcome_allocation(
-        bidders, {}, state["payments"], {}, _best_welfare(bidders, rates)
+        ids(bidders), {}, state["payments"], {}, _best_welfare(bidders, rates)
     )
 
 
@@ -220,7 +220,7 @@ def _settle(
     allocation = {b.id: i for i, b in enumerate(winners)}
     gains = {b.id: b.value * rates[i] for i, b in enumerate(winners)}
     return outcome_allocation(
-        bidders, allocation, payments, gains, _best_welfare(bidders, rates)
+        ids(bidders), allocation, payments, gains, _best_welfare(bidders, rates)
     )
 
 

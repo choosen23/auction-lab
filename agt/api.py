@@ -5,11 +5,15 @@ untrusted body and turning an engine call into a status code. :mod:`agt.serve` i
 only routing, static files and headers, the same way :mod:`agt.mechanisms` is only
 auctions once :mod:`agt.registry` holds the plumbing.
 
-Two rules hold this module together:
+Three rules hold this module together:
 
 * **One copy of the bidder rules.** :func:`validate_series` calls :func:`validate` and
-  adds two checks. A second, drifting copy of "what is a legal bidder" is how one
+  adds two checks; package bids reuse :func:`_number` rather than restating what finite
+  and non-negative mean. A second, drifting copy of "what is a legal offer" is how one
   endpoint quietly becomes the weaker door.
+* **The mechanism says what it takes.** Which of ``bidders`` and ``packages`` a body must
+  carry is read off ``input_kind`` in the registry, so adding a mechanism never means
+  editing a list of names here. The other kind is refused by name, in both directions.
 * **Shape here, ranges in the engine.** These functions make sure a body cannot reach
   the engine as a ``KeyError`` or a ``TypeError``; whether a reserve is negative is the
   engine's business, and its ``ValueError`` becomes the same 400 as one raised here.
@@ -22,8 +26,9 @@ import math
 import traceback
 from typing import Any
 
-from agt.mechanisms import REGISTRY, run
-from agt.series import MAX_ROUNDS, run_series
+from agt.mechanisms import REGISTRY, Mechanism, run
+from agt.packages import MAX_BIDS, MAX_ITEMS, PackageBid
+from agt.series import MAX_ROUNDS, refuse_repeated_rounds, run_series
 from agt.strategies import STRATEGIES
 from agt.trace import Bidder
 
@@ -32,21 +37,78 @@ MAX_BIDDERS = 12
 # What a series runs when the form does not say. Mirrors ``run_series``' own default.
 DEFAULT_ROUNDS = 8
 
+# What one record of each input kind has to carry, in the words the error message uses.
+# The keys are the ``input_kind`` values the registry declares.
+SHAPES = {
+    "single": "an id, a value and a bid",
+    "package": "a bidder, a list of items, a value and a bid",
+}
+
 
 # ------------------------------------------------------------------- validation
 
 
 def validate(payload: Any) -> dict[str, Any]:
-    """Check an untrusted ``/run`` body and return ``{mechanism, bidders, params}``."""
+    """Check an untrusted ``/run`` body and return ``{mechanism, bidders, params}``.
+
+    ``bidders`` carries whichever input kind the mechanism declares — scalar
+    :class:`~agt.trace.Bidder` records for ``"single"``, :class:`PackageBid` records for
+    ``"package"``. It keeps the one name because that is the slot they both go into:
+    :attr:`agt.trace.Trace.bidders`, and from there the ``bidders`` key on the wire.
+    """
+    spec = _mechanism(payload)
+    entrants = _entrants(spec, payload)
+    params = _params(repr(spec.name), payload.get("params"), spec.params)
+    return {"mechanism": spec.name, "bidders": entrants, "params": params}
+
+
+def validate_series(payload: Any) -> dict[str, Any]:
+    """Check an untrusted ``/run_series`` body: :func:`validate`, plus rounds and strategies.
+
+    The input-kind check comes first so a package mechanism is told the real reason it
+    cannot be run in rounds, rather than being told its ``bidders`` list is the wrong key.
+    """
+    refuse_repeated_rounds(_mechanism(payload).name)
+    valid = validate(payload)
+    valid["rounds"] = _rounds(payload.get("rounds"))
+    valid["strategies"] = _strategies(payload.get("strategies"), valid["bidders"])
+    return valid
+
+
+def _mechanism(payload: Any) -> Mechanism:
+    """The registered mechanism a body asks for, or a message naming the ones that exist."""
     if not isinstance(payload, dict):
         raise ValueError("request body must be a JSON object")
-
     name = payload.get("mechanism")
     if not isinstance(name, str) or name not in REGISTRY:
         raise ValueError(
             f"unknown mechanism {name!r}; expected one of {sorted(REGISTRY)}"
         )
+    return REGISTRY[name]
 
+
+def _entrants(spec: Mechanism, payload: dict[str, Any]) -> list[Any]:
+    """Read the input kind the mechanism declares, refusing the other one by name.
+
+    Refusing rather than ignoring: a body carrying ``bidders`` for a combinatorial
+    auction is a form that has not caught up, and quietly dropping the key would run an
+    auction on defaults nobody typed.
+    """
+    wanted, unwanted = (
+        ("packages", "bidders")
+        if spec.input_kind == "package"
+        else ("bidders", "packages")
+    )
+    if unwanted in payload:
+        raise ValueError(
+            f"{spec.name!r} expects {wanted!r}, not {unwanted!r}: its input kind is "
+            f"{spec.input_kind!r}, so every entry needs {SHAPES[spec.input_kind]}"
+        )
+    return _packages(payload) if spec.input_kind == "package" else _bidders(payload)
+
+
+def _bidders(payload: dict[str, Any]) -> list[Bidder]:
+    """One scalar bid each, with ids that do not collide."""
     entries = payload.get("bidders")
     if not isinstance(entries, list) or not 1 <= len(entries) <= MAX_BIDDERS:
         raise ValueError(
@@ -56,17 +118,71 @@ def validate(payload: Any) -> dict[str, Any]:
     seen = [b.id for b in bidders]
     if len(set(seen)) != len(seen):
         raise ValueError(f"bidder ids must be unique, got {seen}")
-
-    params = _params(repr(name), payload.get("params"), REGISTRY[name].params)
-    return {"mechanism": name, "bidders": bidders, "params": params}
+    return bidders
 
 
-def validate_series(payload: Any) -> dict[str, Any]:
-    """Check an untrusted ``/run_series`` body: :func:`validate`, plus rounds and strategies."""
-    valid = validate(payload)
-    valid["rounds"] = _rounds(payload.get("rounds"))
-    valid["strategies"] = _strategies(payload.get("strategies"), valid["bidders"])
-    return valid
+def _packages(payload: dict[str, Any]) -> list[PackageBid]:
+    """All-or-nothing bundles, bounded by what the exhaustive search can finish.
+
+    The caps are the solver's own, not a second opinion: ``greedy_package`` reports the
+    greedy-vs-optimal gap and so runs the exhaustive search too, which means both package
+    mechanisms refuse an oversized input. Meeting that refusal here makes it a 400 the
+    setup form can show, instead of a ``ValueError`` surfacing from inside a generator.
+
+    Repeated bidder ids are legal and are not checked: XOR means one bidder may submit
+    several bundles as alternatives, and at most one of them can win.
+    """
+    entries = payload.get("packages")
+    if not isinstance(entries, list) or not 1 <= len(entries) <= MAX_BIDS:
+        raise ValueError(
+            f"packages must be a list of between 1 and {MAX_BIDS} package bids: "
+            "choosing which bids to accept is NP-hard, so the exhaustive search that "
+            "shows what the greedy shortcut costs is capped"
+        )
+    bids = [_package(i, entry) for i, entry in enumerate(entries)]
+    universe = {item for b in bids for item in b.items}
+    if len(universe) > MAX_ITEMS:
+        raise ValueError(
+            f"the bids name {len(universe)} different items and the exhaustive search "
+            f"is capped at {MAX_ITEMS}: choosing which bids to accept is NP-hard, so "
+            "fewer items or fewer bundles"
+        )
+    return bids
+
+
+def _package(index: int, entry: Any) -> PackageBid:
+    where = f"package bid {index}"
+    if not isinstance(entry, dict):
+        raise ValueError(
+            f"{where} must be a JSON object with bidder, items, value and bid"
+        )
+    bidder = entry.get("bidder")
+    if not isinstance(bidder, str) or not bidder.strip():
+        raise ValueError(f"{where} needs a non-empty string bidder, got {bidder!r}")
+    return PackageBid(
+        bidder=bidder,
+        items=_items(f"{where} ({bidder})", entry.get("items")),
+        value=_number(f"{where} ({bidder}) value", entry.get("value")),
+        bid=_number(f"{where} ({bidder}) bid", entry.get("bid")),
+    )
+
+
+def _items(where: str, raw: Any) -> tuple[str, ...]:
+    """The bundle a package bid is for: at least one item, each one named once.
+
+    A bundle of nothing conflicts with nothing and would win for free, and an item listed
+    twice is a form slip rather than an offer — nobody can be sold the same licence twice.
+    """
+    if not isinstance(raw, list) or not 1 <= len(raw) <= MAX_ITEMS:
+        raise ValueError(
+            f"{where} items must be a list of between 1 and {MAX_ITEMS} item names"
+        )
+    for item in raw:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"{where} needs non-empty string item names, got {item!r}")
+    if len(set(raw)) != len(raw):
+        raise ValueError(f"{where} names the same item twice: {raw}")
+    return tuple(raw)
 
 
 def _params(where: str, given: Any, declared: dict[str, Any]) -> dict[str, Any]:

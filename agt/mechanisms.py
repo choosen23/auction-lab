@@ -451,6 +451,8 @@ def dutch(
 
 # Registration is an import side effect, so the multi-item mechanisms have to be pulled
 # in from here: everything else in the project reaches the registry through this module.
-# The import sits at the bottom because REGISTRY is an ordered dict and the setup form
-# should offer the one-item auctions before the many-item ones.
+# The imports sit at the bottom because REGISTRY is an ordered dict and the setup form
+# should offer the one-item auctions before the many-item ones, and the auctions taking
+# a scalar bid before the ones taking bundles.
 from agt import positions as _positions  # noqa: E402,F401  (registers gsp, vcg_positions)
+from agt import packages as _packages  # noqa: E402,F401  (registers the package auctions)

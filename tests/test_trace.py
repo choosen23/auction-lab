@@ -42,10 +42,15 @@ def test_outcome_flags_inefficient_allocation():
 
 SLOTTED = [Bidder("A", 100, 95), Bidder("B", 72, 72), Bidder("C", 41, 41)]
 
+# `outcome_allocation` is handed the gains rather than reading a `value` off anybody,
+# so all it needs of the room is who is in it — which is also what lets a package
+# mechanism, whose bidders have no single scalar record, use the same scorer.
+SEATS = ["A", "B", "C"]
+
 
 def test_outcome_allocation_scores_every_winner():
     r = outcome_allocation(
-        SLOTTED,
+        SEATS,
         allocation={"A": 0, "B": 1},
         payments={"A": 72, "B": 20.5},
         gains={"A": 100, "B": 36},
@@ -60,7 +65,7 @@ def test_outcome_allocation_scores_every_winner():
 
 def test_outcome_allocation_gives_unallocated_bidders_no_gain():
     r = outcome_allocation(
-        SLOTTED,
+        SEATS,
         allocation={"A": 0},
         payments={"A": 72},
         gains={"A": 100},
@@ -75,7 +80,7 @@ def test_outcome_allocation_flags_a_welfare_shortfall():
     """Efficiency is the whole allocation's business: the same bidders in the wrong
     slots lose welfare even though every slot is filled."""
     r = outcome_allocation(
-        SLOTTED,
+        SEATS,
         allocation={"B": 0, "A": 1},
         payments={"B": 95, "A": 0},
         gains={"B": 72, "A": 50},
@@ -88,7 +93,7 @@ def test_outcome_allocation_flags_a_welfare_shortfall():
 def test_outcome_allocation_names_the_top_winner_so_the_result_panel_still_works():
     """`winner` and `price` stay populated so phase 1's result panel needs no change."""
     r = outcome_allocation(
-        SLOTTED,
+        SEATS,
         allocation={"A": 0, "B": 1},
         payments={"A": 72, "B": 20.5},
         gains={"A": 100, "B": 36},
@@ -103,7 +108,7 @@ def test_outcome_allocation_matches_outcome_when_only_one_bidder_is_allocated():
     scorers would quietly disagree about the same auction."""
     single = outcome(SLOTTED, winner="A", payments={"A": 72, "B": 0, "C": 0})
     allocated = outcome_allocation(
-        SLOTTED,
+        SEATS,
         allocation={"A": 0},
         payments={"A": 72},
         gains={"A": 100},
@@ -114,7 +119,7 @@ def test_outcome_allocation_matches_outcome_when_only_one_bidder_is_allocated():
 
 def test_outcome_allocation_with_nothing_allocated_has_no_winner():
     r = outcome_allocation(
-        SLOTTED, allocation={}, payments={}, gains={}, best_possible_welfare=100
+        SEATS, allocation={}, payments={}, gains={}, best_possible_welfare=100
     )
     assert r["winner"] is None
     assert r["price"] == 0
@@ -128,7 +133,7 @@ def test_outcome_allocation_names_whoever_the_mechanism_ranked_first():
     it, so the top slot stays the top slot even when a lower slot is worth more to the
     bidder holding it."""
     r = outcome_allocation(
-        SLOTTED,
+        SEATS,
         allocation={"B": 0, "A": 1},
         payments={"B": 40, "A": 10},
         gains={"B": 72, "A": 50},
@@ -143,7 +148,7 @@ def test_outcome_allocation_survives_float_dust_in_the_welfare_comparison():
     sum does, so exact equality would report a false inefficiency."""
     gains = {"A": 0.1 * 3, "B": 0.2}
     r = outcome_allocation(
-        [Bidder("A", 1, 1), Bidder("B", 1, 1)],
+        ["A", "B"],
         allocation={"A": 0, "B": 1},
         payments={},
         gains=gains,

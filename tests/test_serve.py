@@ -17,6 +17,7 @@ from http.server import ThreadingHTTPServer
 import pytest
 
 from agt import serve
+from agt.packages import MAX_BIDS, MAX_ITEMS, PackageBid
 from agt.registry import REGISTRY, Mechanism
 from agt.series import MAX_ROUNDS
 from agt.strategies import STRATEGIES
@@ -46,9 +47,33 @@ SERIES = {
 }
 
 
+# The pinned combinatorial case: A wants both licences or neither, B and C want one
+# each, and splitting the pair is worth more than keeping it together.
+PACKAGE = {
+    "mechanism": "vcg_package",
+    "packages": [
+        {"bidder": "A", "items": ["north", "south"], "value": 10, "bid": 10},
+        {"bidder": "B", "items": ["north"], "value": 6, "bid": 6},
+        {"bidder": "C", "items": ["south"], "value": 6, "bid": 6},
+    ],
+}
+
+
 def payload(**overrides):
     """A valid payload with the named keys replaced."""
     return {**GOOD, **overrides}
+
+
+def package_payload(**overrides):
+    """A valid package-auction payload with the named keys replaced."""
+    return {**PACKAGE, **overrides}
+
+
+def one_package(**overrides):
+    """A payload carrying a single package bid, built from one overridden field."""
+    return package_payload(
+        packages=[{**PACKAGE["packages"][1], **overrides}],
+    )
 
 
 def series_payload(**overrides):
@@ -288,6 +313,173 @@ def test_run_payload_returns_500_with_the_partial_trace(broken_mechanism):
     json.dumps(body)
 
 
+# ------------------------------------------------------------ the package input kind
+#
+# `/run` takes `packages` instead of `bidders` when the mechanism declares
+# `input_kind: "package"`. The wrong kind is refused in *both* directions and by name:
+# guessing what a caller meant would run an auction nobody asked for, and a message that
+# only said "invalid" would leave a learner nowhere.
+
+
+def test_validate_accepts_a_package_payload():
+    valid = serve.validate(PACKAGE)
+    assert valid["mechanism"] == "vcg_package"
+    assert valid["bidders"] == [
+        PackageBid("A", ("north", "south"), 10, 10),
+        PackageBid("B", ("north",), 6, 6),
+        PackageBid("C", ("south",), 6, 6),
+    ]
+    assert valid["params"] == {}
+
+
+def test_run_payload_runs_a_package_mechanism_end_to_end():
+    status, body = serve.run_payload(PACKAGE)
+    assert status == 200
+    assert body["result"]["allocation"] == {"B": ["north"], "C": ["south"]}
+    assert body["result"]["welfare_gap"] == 2
+    assert body["bidders"][0] == {
+        "bidder": "A",
+        "items": ["north", "south"],
+        "value": 10,
+        "bid": 10,
+    }
+    json.dumps(body)
+
+
+def test_a_package_mechanism_refuses_scalar_bidders_and_names_the_kind_it_wants():
+    status, body = serve.run_payload(
+        {"mechanism": "vcg_package", "bidders": GOOD["bidders"]}
+    )
+    assert status == 400
+    assert "packages" in body["error"]
+    assert "vcg_package" in body["error"]
+
+
+def test_a_single_item_mechanism_refuses_packages_and_names_the_kind_it_wants():
+    status, body = serve.run_payload(
+        {"mechanism": "second_price", "packages": PACKAGE["packages"]}
+    )
+    assert status == 400
+    assert "bidders" in body["error"]
+    assert "second_price" in body["error"]
+
+
+def test_a_package_mechanism_with_no_packages_key_says_what_it_wanted():
+    status, body = serve.run_payload({"mechanism": "greedy_package"})
+    assert status == 400
+    assert "packages" in body["error"]
+
+
+@pytest.mark.parametrize("junk", [None, "A", 5, [], {}])
+def test_validate_rejects_a_non_list_package_field(junk):
+    with pytest.raises(ValueError, match="packages must be a list"):
+        serve.validate(package_payload(packages=junk))
+
+
+@pytest.mark.parametrize("bad_id", [None, "", "   ", 5, ["A"]])
+def test_validate_rejects_a_bad_package_bidder_id(bad_id):
+    with pytest.raises(ValueError, match="non-empty string bidder"):
+        serve.validate(one_package(bidder=bad_id))
+
+
+@pytest.mark.parametrize("junk", [None, "north", 5, {}, []])
+def test_validate_rejects_a_bad_item_list(junk):
+    with pytest.raises(ValueError, match="items must be a list"):
+        serve.validate(one_package(items=junk))
+
+
+@pytest.mark.parametrize("bad_item", [None, "", "   ", 5, ["north"]])
+def test_validate_rejects_a_bad_item_name(bad_item):
+    with pytest.raises(ValueError, match="non-empty string item names"):
+        serve.validate(one_package(items=[bad_item]))
+
+
+def test_validate_rejects_a_bundle_naming_the_same_item_twice():
+    with pytest.raises(ValueError, match="same item twice"):
+        serve.validate(one_package(items=["north", "north"]))
+
+
+@pytest.mark.parametrize("field", ["value", "bid"])
+@pytest.mark.parametrize("bad", [None, "10", True, -1, float("inf"), float("nan")])
+def test_validate_rejects_bad_package_numbers(field, bad):
+    """The same finite/non-negative rules the scalar bidders get, not a second copy."""
+    with pytest.raises(ValueError, match=field):
+        serve.validate(one_package(**{field: bad}))
+
+
+def test_validate_rejects_a_package_entry_that_is_not_an_object():
+    with pytest.raises(ValueError, match="package bid 0"):
+        serve.validate(package_payload(packages=["north"]))
+
+
+def test_validate_rejects_an_empty_package_list():
+    with pytest.raises(ValueError, match="packages must be a list"):
+        serve.validate(package_payload(packages=[]))
+
+
+def test_validate_rejects_a_param_a_package_mechanism_does_not_declare():
+    """Combinatorial reserve prices do not exist yet, so a reserve must be refused
+    rather than accepted and quietly dropped."""
+    with pytest.raises(ValueError, match="unknown parameter 'reserve'"):
+        serve.validate(package_payload(params={"reserve": 5}))
+
+
+# --------------------------------------------- the solver's size guard, as a 400
+
+
+def test_more_packages_than_the_search_can_take_is_a_400_not_a_500():
+    """`greedy_package` inherits the exhaustive search's bound because it reports the
+    greedy-vs-optimal gap, so both mechanisms have to refuse an oversized input, and a
+    learner has to meet that refusal as a bad request rather than as a crash."""
+    oversized = [
+        {"bidder": f"b{i}", "items": [f"item{i}"], "value": 1, "bid": 1}
+        for i in range(MAX_BIDS + 1)
+    ]
+    for name in ("greedy_package", "vcg_package"):
+        status, body = serve.run_payload(
+            package_payload(mechanism=name, packages=oversized)
+        )
+        assert status == 400, name
+        assert str(MAX_BIDS) in body["error"]
+
+
+def test_more_items_than_the_search_can_take_is_a_400_not_a_500():
+    crowded = [
+        {"bidder": f"b{i}", "items": [f"item{i}"], "value": 1, "bid": 1}
+        for i in range(MAX_ITEMS + 1)
+    ]
+    status, body = serve.run_payload(package_payload(packages=crowded))
+    assert status == 400
+    assert str(MAX_ITEMS) in body["error"]
+    assert str(MAX_ITEMS + 1) in body["error"], "say how big the input actually was"
+
+
+def test_a_payload_at_exactly_the_bound_still_runs():
+    """The stated limits have to be usable, not just stated."""
+    at_bound = [
+        {"bidder": f"b{i}", "items": [f"item{i % MAX_ITEMS}"], "value": 100 - i, "bid": 100 - i}
+        for i in range(MAX_BIDS)
+    ]
+    status, body = serve.run_payload(package_payload(packages=at_bound))
+    assert status == 200
+    assert body["result"]["welfare_gap"] >= 0
+
+
+def test_run_payload_never_raises_on_hostile_package_input():
+    hostile = [
+        {"mechanism": "vcg_package", "packages": [{"bidder": "A"}]},
+        {"mechanism": "vcg_package", "packages": [{"bidder": "A", "items": []}]},
+        {"mechanism": "vcg_package", "packages": [{"bidder": "A", "items": ["n"], "value": 10**400, "bid": 1}]},
+        {"mechanism": "greedy_package", "packages": None, "params": None},
+        {"mechanism": "greedy_package", "packages": [{}] * 3},
+    ]
+    for body in hostile:
+        status, answer = serve.run_payload(body)
+        assert status in (400, 500), body
+        assert isinstance(answer["error"], str)
+        json.dumps(answer)
+
+
 # -------------------------------------------------------------- validate_series
 
 
@@ -318,6 +510,40 @@ def test_validate_series_reuses_the_bidder_rules():
         serve.validate_series(series_payload(mechanism="nope"))
     with pytest.raises(ValueError, match="unknown parameter"):
         serve.validate_series(series_payload(params={"bogus": 1}))
+
+
+@pytest.mark.parametrize("name", ["greedy_package", "vcg_package"])
+def test_validate_series_refuses_a_package_mechanism(name):
+    """A phase 2 strategy answers one question — what number should I bid — and a bidder
+    submitting bundles has no such number. Faking one would draw a bid path that means
+    nothing, so the endpoint says no and says why."""
+    with pytest.raises(ValueError, match="repeated rounds"):
+        serve.validate_series(series_payload(mechanism=name))
+
+
+def test_the_series_refusal_names_the_mechanism_and_the_reason():
+    with pytest.raises(ValueError) as caught:
+        serve.validate_series(series_payload(mechanism="vcg_package"))
+    message = str(caught.value)
+    assert "vcg_package" in message
+    assert "package" in message
+    assert "single" in message
+
+
+def test_run_series_payload_refuses_a_package_mechanism_with_a_400():
+    status, body = serve.run_series_payload(series_payload(mechanism="greedy_package"))
+    assert status == 400
+    assert "greedy_package" in body["error"]
+    assert set(body) == {"error"}
+
+
+def test_the_engine_refuses_a_package_series_too():
+    """The rejection lives in the engine as well as at the door, because the engine runs
+    under Pyodide with no door in front of it."""
+    from agt.series import run_series
+
+    with pytest.raises(ValueError, match="repeated rounds"):
+        run_series("vcg_package", [Bidder("A", 10, 10)], {"A": {"name": "manual"}}, 2)
 
 
 def test_validate_series_defaults_missing_rounds():
