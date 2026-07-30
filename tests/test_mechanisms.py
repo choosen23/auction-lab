@@ -88,6 +88,17 @@ def test_non_numeric_param_is_rejected():
         run("second_price", BIDDERS, {"reserve": "cheap"})
 
 
+def test_duplicate_bidder_ids_are_rejected():
+    """Duplicates would silently collapse in payments/utilities, so the engine refuses."""
+    with pytest.raises(ValueError, match="unique"):
+        run("second_price", [Bidder("A", 100, 95), Bidder("A", 72, 72)])
+
+
+def test_empty_bidder_list_is_rejected():
+    with pytest.raises(ValueError, match="at least one bidder"):
+        run("second_price", [])
+
+
 def test_defaults_are_applied_and_recorded():
     t = run("second_price", BIDDERS)
     assert t.params["reserve"] == 0

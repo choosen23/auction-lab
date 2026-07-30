@@ -69,6 +69,7 @@ def run(
         raise ValueError(
             f"unknown mechanism {name!r}; expected one of {sorted(REGISTRY)}"
         )
+    _check_bidders(bidders)
     spec = REGISTRY[name]
     resolved = _resolve_params(spec, params or {})
 
@@ -89,6 +90,21 @@ def run(
         steps=steps,
         result=result,
     )
+
+
+def _check_bidders(bidders: list[Bidder]) -> None:
+    """Guard the one caller mistake the engine cannot survive: colliding or absent ids.
+
+    ``payments`` and ``utilities`` are keyed by id, so duplicates silently collapse into
+    one entry and the trace stops adding up. This lives here rather than only in
+    ``agt.serve`` because the engine is meant to run under Pyodide with no server in
+    front of it. It is a guard, not a validation layer — payload shape is the server's job.
+    """
+    if not bidders:
+        raise ValueError("at least one bidder is required")
+    seen = [b.id for b in bidders]
+    if len(set(seen)) != len(seen):
+        raise ValueError(f"bidder ids must be unique, got {seen}")
 
 
 def _resolve_params(spec: Mechanism, given: dict[str, Any]) -> dict[str, Any]:
