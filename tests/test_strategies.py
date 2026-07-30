@@ -132,6 +132,87 @@ def test_schema_is_a_copy_so_callers_cannot_edit_the_registry():
     assert STRATEGIES["manual"].label != "hacked"
 
 
+# ----------------------------------------------------------------- best response
+#
+# The point of the phase: one mechanism-agnostic strategy, opposite behaviour under
+# second-price and first-price rules, purely because the mechanism differs.
+
+
+def past(bids, round=0, winner=None, price=0):
+    return RoundView(round=round, bids=dict(bids), winner=winner, price=price)
+
+
+def respond(mechanism, value, rival_bids, seat=0, typed=95, params=None, **overrides):
+    ctx = context(
+        bidder=Bidder("A", value, typed),
+        rivals=tuple(rival_bids),
+        seat=seat,
+        round=1,
+        history=[past({"A": typed, **rival_bids})],
+        mechanism=mechanism,
+        params=params,
+    )
+    return decide("best_response", ctx, overrides or None)
+
+
+@pytest.mark.parametrize(
+    "rival_bids", [{"B": 50}, {"B": 120}, {"B": 100}, {"B": 0}, {"B": 50, "C": 80}]
+)
+@pytest.mark.parametrize("seat", [0, 1])
+def test_best_response_is_truthful_under_second_price(rival_bids, seat):
+    """Truthfulness is the best reply to anything, and the strategy finds that by
+    running the mechanism, not by knowing it."""
+    assert respond("second_price", 100, rival_bids, seat=seat).bid == 100
+
+
+def test_best_response_is_truthful_under_an_ascending_clock_too():
+    assert respond("english", 100, {"B": 50}, seat=1).bid == 100
+
+
+@pytest.mark.parametrize("seat,expected", [(0, 50), (1, 51)])
+def test_best_response_shades_below_value_under_first_price(seat, expected):
+    """Same code, opposite conclusion: buy the item as cheaply as the rival allows."""
+    d = respond("first_price", 100, {"B": 50}, seat=seat)
+    assert d.bid == expected
+    assert d.bid < 100
+
+
+def test_best_response_is_mechanism_agnostic_under_all_pay():
+    d = respond("all_pay", 100, {"B": 50}, seat=1)
+    assert d.bid == 51
+    assert max(c["utility"] for c in d.considered) == 49
+
+
+def test_best_response_never_considers_a_bid_above_value():
+    d = respond("first_price", 100, {"B": 500}, seat=1, typed=95)
+    assert d.bid <= 100
+    assert all(0 <= c["bid"] <= 100 for c in d.considered)
+
+
+def test_tick_sets_how_far_above_a_rival_to_look():
+    assert respond("first_price", 100, {"B": 50}, seat=1, tick=10).bid == 60
+
+
+def test_best_response_records_every_candidate_and_what_it_was_worth():
+    d = respond("first_price", 100, {"B": 50}, seat=1)
+    assert [c["bid"] for c in d.considered] == [0, 50, 51, 100]
+    assert all("utility" in c for c in d.considered)
+    chosen = [c for c in d.considered if c["bid"] == d.bid][0]
+    assert chosen["utility"] == max(c["utility"] for c in d.considered)
+
+
+def test_best_response_opens_with_the_typed_bid_when_there_is_no_history():
+    d = decide("best_response", context(round=0, history=[]))
+    assert d.bid == 95
+    assert d.considered is None
+
+
+def test_best_response_states_that_it_assumes_rivals_repeat_their_bids():
+    why = respond("first_price", 100, {"B": 50}, seat=1).why.lower()
+    assert "repeat" in why
+    assert "last round" in why or "previous" in why
+
+
 # ---------------------------------------------------- the privacy rule (load-bearing)
 
 

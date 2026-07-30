@@ -248,3 +248,107 @@ def shade_bne(context: StrategyContext) -> BidDecision:
             else "."
         )
     return BidDecision(bid, f"{derivation} {caveat}")
+
+
+TICK = {
+    "type": "number",
+    "default": 1,
+    "label": "Bid increment",
+    "min": 0,
+    "description": "How far above a rival's last bid the search is willing to step.",
+}
+
+
+@strategy(
+    "best_response",
+    label="Best response to last round",
+    description="Try candidate bids against last round's bids and keep the most profitable one.",
+    params={"tick": TICK},
+)
+def best_response(context: StrategyContext, tick: Number = 1) -> BidDecision:
+    """Pick the bid that would have paid best against last round's bids.
+
+    Nothing here knows what mechanism it is playing: every candidate is scored by
+    *running* the mechanism and reading this bidder's utility out of the result. That is
+    why the same code bids truthfully under second-price rules and shades under
+    first-price rules, and why every mechanism added later gets a best-response bidder
+    for free.
+    """
+    me = context.bidder
+    if not context.history:
+        return BidDecision(
+            me.bid,
+            f"{me.id} has no previous round to react to, so it opens with the "
+            f"{num(me.bid)} typed into the form; from the next round on it bids the best "
+            "reply to what rivals actually did.",
+        )
+
+    rival_bids = {rid: context.history[-1].bids.get(rid, 0) for rid in context.rival_ids}
+    guesses = [0, me.value, *rival_bids.values(), *(b + tick for b in rival_bids.values())]
+    candidates = sorted({min(max(g, 0), me.value) for g in guesses})
+
+    considered = []
+    for candidate in candidates:
+        utility = _utility_if(context, candidate, rival_bids)
+        # A mechanism can refuse a bid outright (a Dutch clock cannot open below one), and
+        # a bid that cannot be submitted is not a candidate.
+        if utility is not None:
+            considered.append({"bid": candidate, "utility": utility})
+    if not considered:
+        return BidDecision(
+            me.bid,
+            f"{me.id} could not find a single bid this mechanism would accept against "
+            f"last round's bids, so it repeats the {num(me.bid)} typed into the form.",
+        )
+
+    # ponytail: ties go to the truthful bid first and only then to the lower bid. Under
+    # second-price rules the top-utility set is *always* a tie — bidding 51, 100 or
+    # anything between wins at the same price — so preferring the lower bid there would
+    # answer "shade to just above the rival" and bury the one lesson the mechanism exists
+    # to teach. Preferring the truthful bid costs nothing elsewhere: under first-price
+    # rules the maximum is unique whenever there is surplus to win, and among untruthful
+    # candidates the lower bid still wins, so an indifferent bidder is never shown bidding
+    # aggressively for no reason. Ceiling: a bidder indifferent between its value and a
+    # cheaper bid is shown the honest one. Upgrade: expose the tie rule as a param if a
+    # lesson ever needs the other order.
+    best = min(considered, key=lambda c: (-c["utility"], c["bid"] != me.value, c["bid"]))
+    seen = ", ".join(f"{rid} {num(b)}" for rid, b in rival_bids.items()) or "nobody"
+    return BidDecision(
+        best["bid"],
+        f"{me.id} scored {len(considered)} candidate bids against last round's bids "
+        f"({seen}) and kept {num(best['bid'])}, worth {num(best['utility'])} under "
+        f"{context.mechanism} — the most profitable reply *if* every rival repeats "
+        "exactly what they bid last round, which is the assumption this strategy makes "
+        "and the first one to fail once rivals start moving too.",
+        considered=considered,
+    )
+
+
+def _lineup(
+    context: StrategyContext, my_bid: Number, rival_bids: dict[str, Number]
+) -> list[Bidder]:
+    """Rebuild the table with a candidate bid in this bidder's own chair.
+
+    Seating matters because ties break by list order, so a what-if run that reseated the
+    bidder would score ties it would not actually win.
+    """
+    # ponytail: rivals are probed with value = bid, since the strategy cannot see their
+    # real values. Ceiling — welfare and efficiency inside a probe trace are meaningless,
+    # so nothing reads them; this bidder's own utility depends only on who wins and what
+    # they pay, which the bids alone decide. Upgrade: none while the privacy rule stands.
+    rivals = [Bidder(rid, bid, bid) for rid, bid in rival_bids.items()]
+    me = Bidder(context.bidder.id, context.bidder.value, my_bid)
+    return [*rivals[: context.seat], me, *rivals[context.seat :]]
+
+
+def _utility_if(
+    context: StrategyContext, my_bid: Number, rival_bids: dict[str, Number]
+) -> Number | None:
+    """What this bidder would have earned bidding ``my_bid``, or None if it is illegal."""
+    try:
+        trace = run(
+            context.mechanism, _lineup(context, my_bid, rival_bids), dict(context.params)
+        )
+    except ValueError:
+        return None
+    return trace.result["utilities"][context.bidder.id]
