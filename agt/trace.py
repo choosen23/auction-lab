@@ -112,6 +112,58 @@ def outcome(
     }
 
 
+# ponytail: an absolute tolerance on the efficiency comparison. Click-weighted welfare
+# adds its terms in slot order while the best-possible welfare adds them in value order,
+# so two totals that are equal on paper can differ in the last bit and an exact `==`
+# would report a false inefficiency. Ceiling: values above roughly 1e9 make this
+# effectively exact equality again. Upgrade: switch to `math.isclose` if a lesson ever
+# needs numbers that large.
+WELFARE_TOLERANCE = 1e-9
+
+
+def outcome_allocation(
+    bidders: list[Bidder],
+    allocation: dict[str, Any],
+    payments: dict[str, Number],
+    gains: dict[str, Number],
+    best_possible_welfare: Number,
+) -> dict[str, Any]:
+    """Score an allocation of several things at once: the sibling of :func:`outcome`.
+
+    ``allocation`` maps a bidder id to whatever they received — a slot index, a bundle of
+    items — and simply omits anybody who received nothing. It is ordered **best first**:
+    the mechanism lists its winners in the order it ranked them. ``gains`` is the *gross
+    value* each winner actually got, which for a position auction is their value per
+    click times the slot's click-through rate, so it is not the bidder's ``value`` and
+    cannot be read off the bidder the way :func:`outcome` reads it.
+    ``best_possible_welfare`` is passed in because only the mechanism knows which
+    allocations were available.
+
+    ``winner`` and ``price`` stay populated with that first winner and what they paid, so
+    a renderer written against :func:`outcome` keeps working unchanged. Reading the top
+    off the ordering rather than off the largest gain matters: the holder of the most
+    clicked slot is the winner even when a bidder further down values their smaller slot
+    more.
+    """
+    settled = {b.id: payments.get(b.id, 0) for b in bidders}
+    earned = {b.id: gains.get(b.id, 0) for b in bidders}
+    utilities = {b.id: earned[b.id] - settled[b.id] for b in bidders}
+    welfare = sum(earned.values())
+    winner = next(iter(allocation), None)
+    return {
+        "winner": winner,
+        "price": settled.get(winner, 0),
+        "payments": settled,
+        "utilities": utilities,
+        "revenue": sum(settled.values()),
+        "welfare": welfare,
+        "efficient": bool(abs(welfare - best_possible_welfare) < WELFARE_TOLERANCE),
+        "allocation": dict(allocation),
+        "gains": earned,
+        "best_possible_welfare": best_possible_welfare,
+    }
+
+
 @dataclass(frozen=True)
 class Trace:
     """A complete run: what was asked for, every step taken, and the final scoring."""
