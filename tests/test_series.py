@@ -176,3 +176,73 @@ def test_a_best_responder_ignores_a_rival_value_it_cannot_see():
     assert [r.decisions["A"].why for r in rich.rounds] == [
         r.decisions["A"].why for r in poor.rounds
     ]
+
+
+# --------------------------------------- GSP best-response dynamics (a real cycle)
+#
+# `best_response` scores candidates by *running* the mechanism, so GSP got a
+# best-responding bidder the moment it was registered, with no new strategy code. What
+# came out is the behaviour GSP is known for: with as many slots as bidders there is no
+# bid profile everybody is happy to repeat, and the series oscillates forever. These
+# tests pin the direction of that — that it cycles rather than settles or stalls — and
+# deliberately not the exact numbers, which are an artefact of one bid profile.
+
+
+def positions(mechanism, slots, rounds=10, bidders=BIDDERS):
+    plan = {b.id: {"name": "best_response"} for b in bidders}
+    return run_series(mechanism, bidders, plan, rounds=rounds, params={"slots": slots})
+
+
+def profiles(series):
+    """One tuple per round: who bid what, so repeats are comparable."""
+    paths = series.summary["bid_paths"]
+    return [
+        tuple(sorted((who, path[r]) for who, path in paths.items()))
+        for r in range(len(series.rounds))
+    ]
+
+
+def test_best_response_actually_drives_gsp():
+    """The seam first: every bidder from round 1 on really did score candidate bids under
+    GSP. A strategy that silently fell back on the typed bid would produce a flat, stable
+    series that looks like convergence and means nothing."""
+    series = positions("gsp", slots=3)
+    for record in series.rounds[1:]:
+        for who, decision in record.decisions.items():
+            assert decision.considered, f"round {record.round}: {who} scored nothing"
+
+
+def test_gsp_best_response_cycles_instead_of_settling():
+    """Three bidders, three slots: dropping a slot on purpose is a profitable reply to
+    honest rivals, and bidding honestly is a profitable reply to that, so the series
+    walks back into a profile it has already played and never leaves."""
+    series = positions("gsp", slots=3)
+    seen = profiles(series)
+
+    assert series.summary["converged"] is False
+    assert series.summary["converged_round"] is None
+    assert seen[-1] in seen[:-1], "a cycle revisits a profile; a drift does not"
+    assert len(set(seen)) < len(seen) - 2, "it is a short cycle, not a long wander"
+
+    top = series.summary["bid_paths"]["A"]
+    assert min(top) < max(top), "the top bidder moves"
+    assert any(a > b for a, b in zip(top, top[1:])), "and moves down as well as up"
+    assert any(a < b for a, b in zip(top, top[1:]))
+
+
+def test_vcg_best_response_settles_on_bidding_your_value():
+    """The same bidders, the same slots, the same strategy: the truthful payment rule
+    turns the cycle into a fixed point at the values themselves."""
+    series = positions("vcg_positions", slots=3)
+    assert series.summary["converged"] is True
+    assert settled(series) == VALUES
+
+
+def test_gsp_best_response_can_settle_below_your_value():
+    """GSP does not always cycle. With fewer slots than bidders this profile settles —
+    but it settles with the highest-value bidder sitting *under* a rival on purpose,
+    paying less for fewer clicks, which is the untruthfulness made visible."""
+    series = positions("gsp", slots=2)
+    assert series.summary["converged"] is True
+    assert settled(series)["A"] < VALUES["A"]
+    assert series.rounds[-1].trace.result["allocation"]["A"] == 1
