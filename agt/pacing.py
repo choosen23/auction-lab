@@ -18,133 +18,17 @@ bidder is steering is a pure function of what it was allowed to see.
 Every one of them publishes that variable on :attr:`agt.strategies.BidDecision.control`,
 so the chart that shows the loop settling reads a number the bidder actually acted on
 rather than one inferred from its bids.
+
+The feedback law itself lives in :mod:`agt.steering`, because ``pace_multiplicative`` and
+``throttle`` genuinely share one — they differ in what they move, not in how they decide
+to move it, and keeping the law in one place is what makes that claim checkable rather
+than merely asserted.
 """
 
-from typing import Any
-
 from agt.stages import num
+from agt.steering import STEP, clamp, direction, horizon, knob, steer
 from agt.strategies import BidDecision, StrategyContext, strategy
 from agt.trace import Number
-
-# The most one round's news may multiply a control variable by, in either direction. A
-# bidder that won nothing all day has an infinite target-over-actual ratio, and without a
-# bound the first nudge would slam the knob to its stop and the loop would learn nothing
-# from every round after it.
-#
-# ponytail: one shared cap for every steered variable. Ceiling — pacing and throttling
-# want the same caution here, but a controller tuned for a fast market might not. Upgrade:
-# make it a param the first time a lesson needs a strategy to move faster than doubling.
-CAP = 2.0
-
-# The default is 0.2 because it was measured, not guessed. Over a 30-round day against a
-# steady market, across ten seeds:
-#
-#   step 0.1  under-damped. mu falls monotonically and never overshoots, but too slowly to
-#             stop the early overspending: 84-99% of the budget was gone by half time and
-#             the bidder was then barred for the rest of the day, 3 to 16 rounds of it.
-#   step 0.2  converged. mu dips to about 0.15, settles near 0.26, and the bidder was
-#             barred on *no* round in any of the ten seeds.
-#   step 0.3  over-damped. mu over-corrects downward, only 38-48% of the budget is spent by
-#             half time, and the day ends in a catch-up scramble.
-#
-# The well-tuned gain leaves a little on the table — 0.2 finished on 66-93% of the budget
-# where the badly tuned ones burned 94-100% of it — and that is the trade, not a defect: a
-# loop tuned to spend every last unit is a loop tuned to spend it early.
-STEP = {
-    "type": "number",
-    "default": 0.2,
-    "label": "Step size",
-    "min": 0,
-    "max": 1,
-    "description": "How much of each round's correction to actually apply. 0 never steers.",
-}
-
-
-def _clamp(value: float, low: float, high: float) -> float:
-    return min(max(value, low), high)
-
-
-def _horizon(context: StrategyContext) -> int:
-    """How many rounds the day has in total, counted from where this bidder stands.
-
-    ``rounds_left`` includes the round about to be played, so this is the world's own
-    round count — and pacing has to divide by it, which is why the world owns it rather
-    than the loop.
-    """
-    return context.round + context.rounds_left
-
-
-def _spend_path(context: StrategyContext) -> list[Number]:
-    """Cumulative spend after each finished round, read off the public record.
-
-    ponytail: a :class:`~agt.strategies.RoundView` records who won and what they paid, so
-    this reconstructs spend from wins. Ceiling — under ``all_pay`` rules the losers pay
-    too, and this path will understate what they handed over; ``context.spent`` still
-    holds the true running total, so only the *shape* is approximate and only there.
-    Upgrade: carry each bidder's realised payment on ``RoundView``. Payments are public,
-    so that is a legal widening of the privacy seam in :func:`agt.strategies.observe`,
-    not a breach of it.
-    """
-    total: Number = 0
-    path = []
-    for view in context.history:
-        if view.winner == context.bidder.id:
-            total += view.price
-        path.append(total)
-    return path
-
-
-def _ratio(target: Number | None, actual: Number) -> float:
-    """Target spend over actual spend: above 1 means underspending, below 1 overspending.
-
-    ``None`` is no budget at all, which is a budget that can never bind — the same answer
-    a limitless one would give, arrived at by the same feedback rather than by a branch
-    that skips the loop.
-    """
-    if target is None:
-        return CAP
-    if target <= 0:
-        return 1 / CAP
-    if actual <= 0:
-        return CAP
-    return _clamp(target / actual, 1 / CAP, CAP)
-
-
-def _steer(
-    context: StrategyContext, start: float, step: float
-) -> tuple[float, float, Number | None]:
-    """Replay a control variable forward: one nudge per finished round, clamped to [0, 1].
-
-    Returns where the variable stands now, where it stood before the last nudge, and the
-    straight-line spend target it was last steered against. The target is a flat line
-    because it is the honest null: a bidder with no forecast of what the rest of the day
-    holds has no reason to expect the afternoon to be worth more than the morning.
-    """
-    rounds, budget = _horizon(context), context.budget
-    value = previous = start
-    target: Number | None = None
-    for index, spent in enumerate(_spend_path(context)):
-        target = None if budget is None else budget * (index + 1) / rounds
-        previous = value
-        value = _clamp(value * (1 + step * (_ratio(target, spent) - 1)), 0, 1)
-    return value, previous, target
-
-
-def _direction(value: float, previous: float) -> str:
-    if value > previous:
-        return "up"
-    return "down" if value < previous else "steady"
-
-
-def _knob(name: str, label: str, value: float, previous: float) -> dict[str, Any]:
-    """The control variable, in the shape a chart reads. See ``BidDecision.control``."""
-    return {
-        "name": name,
-        "label": label,
-        "value": value,
-        "previous": previous,
-        "direction": _direction(value, previous),
-    }
 
 
 def _pacing_note(context: StrategyContext, target: Number | None) -> str:
@@ -156,7 +40,7 @@ def _pacing_note(context: StrategyContext, target: Number | None) -> str:
         )
     return (
         f"It has spent {num(context.spent)} of its {num(context.budget)} with "
-        f"{context.rounds_left} of {_horizon(context)} rounds still to play, against a "
+        f"{context.rounds_left} of {horizon(context)} rounds still to play, against a "
         f"straight-line target of {num(target or 0)} by now"
     )
 
@@ -243,14 +127,14 @@ def pace_multiplicative(
     spend. Scaling the bid keeps the bidder in *every* auction and lets the mechanism
     decide which ones it wins, which turns out to select the cheap ones.
     """
-    mu, previous, target = _steer(context, mu_start, step)
+    mu, previous, target = steer(context, mu_start, step)
     me = context.bidder
     bid = me.value * mu
     moving = {
         "down": "and heading down, because spend is running ahead of the straight line",
         "up": "and heading up, because the money is not going out fast enough",
         "steady": "and steady, which is what a loop with nothing left to correct looks like",
-    }[_direction(mu, previous)]
+    }[direction(mu, previous)]
     return BidDecision(
         bid,
         f"{me.id} bids value x mu = {num(me.value)} x {mu:.3f} = {num(bid)}. mu is at "
@@ -258,5 +142,208 @@ def pace_multiplicative(
         "stopped being a knob and become a shadow price on the budget: the share of "
         "surplus this bidder has to hand back on every single impression to make the "
         "money reach the end of the day.",
-        control=_knob("mu", "Pacing multiplier (mu)", mu, previous),
+        control=knob("mu", "Pacing multiplier (mu)", mu, previous),
     )
+
+
+# ------------------------------------------------------- p, the same money spent worse
+
+
+P_START = {
+    "type": "number",
+    "default": 0.5,
+    "label": "Starting entry probability (p)",
+    "min": 0,
+    "max": 1,
+    "description": "How often to enter an auction before any feedback has arrived.",
+}
+
+
+@strategy(
+    "throttle",
+    label="Probabilistic throttling",
+    description="Bid your full value, but enter only a fraction p of auctions; steer p to the budget.",
+    params={"p_start": P_START, "step": STEP},
+)
+def throttle(
+    context: StrategyContext, p_start: float = 0.5, step: float = 0.2
+) -> BidDecision:
+    """Enter with probability *p* and bid the full value; sit out the rest.
+
+    This is ``pace_multiplicative``'s steering law driving a different actuator. Pacing
+    changes *how much it bids*; throttling changes *how often it bids at all*. Both land
+    on the budget, and comparing them is the point of having both.
+
+    They do not buy the same things. Pacing stays in every auction with a shaded bid, so
+    it wins precisely the impressions its shading can still afford — the ones going cheap
+    relative to what they are worth to it. Throttling picks its rounds with a coin that
+    knows nothing about the auction, pays full price for whatever it lands on, and skips
+    bargains for no reason other than the coin. Same budget, same spend, worse basket.
+
+    That is the general shape of the thing: a bidder that reduces spend by *withdrawing*
+    loses the ability to be selective, and a bidder that reduces spend by *shading* keeps
+    it. The coin is not the problem — bidding full price on a random subset is.
+    """
+    p, previous, target = steer(context, p_start, step)
+    me = context.bidder
+    # One draw per round from this bidder's own stream. Never the global `random` module:
+    # a strategy that reached for it would make the whole series irreproducible from its
+    # seed, and there is a test in `agt.world` standing over exactly that.
+    entering = context.rng.random() < p
+    moving = {
+        "down": "and heading down, because spend is running ahead of the straight line",
+        "up": "and heading up, because the money is not going out fast enough",
+        "steady": "and steady, with nothing left to correct",
+    }[direction(p, previous)]
+    verdict = (
+        f"the coin came up entering, so it bids its full {num(me.value)}"
+        if entering
+        else "the coin came up sitting out, so it does not enter at all"
+    )
+    return BidDecision(
+        me.value,
+        f"{me.id} enters with probability p = {p:.3f} {moving}; this round {verdict}. "
+        f"{_pacing_note(context, target)}. Throttling reaches the budget by buying less "
+        "often at full price, where pacing reaches it by shading and buying often — so "
+        "the coin decides which impressions it gets rather than the value of them, and "
+        "the bargains it skips are skipped for no reason at all.",
+        abstain=not entering,
+        control=knob("p", "Entry probability (p)", p, previous),
+    )
+
+
+# -------------------------------------------------- a loop that rings, on purpose
+
+
+TARGET_RATE = {
+    "type": "number",
+    "default": 0.3,
+    "label": "Target win rate",
+    "min": 0,
+    "max": 1,
+    "description": "The share of rounds this bidder is trying to win.",
+}
+
+KP = {
+    "type": "number",
+    "default": 1,
+    "label": "Proportional gain (kp)",
+    "min": 0,
+    "description": "How hard to react to the current win-rate error. Too high and it rings.",
+}
+
+KI = {
+    "type": "number",
+    "default": 0.2,
+    "label": "Integral gain (ki)",
+    "min": 0,
+    "description": "How hard to react to accumulated error. Removes a standing offset.",
+}
+
+# ponytail: the multiplier is clamped to [0, 3] rather than left free. Ceiling — a loop
+# wound up hard enough to want 10x value is pinned at 3 and the chart shows a flat line
+# where the truth is "far past the top of the scale". Upgrade: publish the unclamped
+# demand alongside the applied one if a lesson ever needs to show saturation as such.
+# The upper bound is deliberately above 1: overbidding is a real thing a badly tuned
+# controller does, and capping at 1 would hide the most instructive half of the failure.
+MAX_MULTIPLIER = 3.0
+
+
+@strategy(
+    "pid_winrate",
+    label="PID win-rate control",
+    description="Hold a target win rate with proportional and integral terms on a bid multiplier.",
+    params={"target_rate": TARGET_RATE, "kp": KP, "ki": KI},
+)
+def pid_winrate(
+    context: StrategyContext,
+    target_rate: float = 0.3,
+    kp: float = 1,
+    ki: float = 0.2,
+) -> BidDecision:
+    """Steer a *win rate* rather than a spend rate, with a textbook PI controller.
+
+    ``multiplier = 1 + kp x error + ki x accumulated error``, where the error is the
+    target win rate minus the win rate achieved so far. Winning too much drives the error
+    negative, which pulls the multiplier down; winning too little pushes it back up.
+
+    **It will overshoot and oscillate when the gains are wrong, and that is the lesson.**
+    A high ``kp`` reacts to the current error so hard that it sails past the target, then
+    reacts to *that* error just as hard coming back, and the win rate rings instead of
+    settling. Nothing here damps that, hides it, or quietly clamps it into looking calm:
+    a control loop is only as good as its gains, and seeing a badly tuned one ring is
+    worth more than seeing a well tuned one succeed.
+
+    The proportional term alone would leave a standing offset — it needs an error to
+    produce any correction, so it settles *near* the target rather than on it. The
+    integral term is what removes that, by growing for as long as the error persists. It
+    is also what makes a badly tuned loop wind up and take a long time to come back.
+
+    Two things about the failure are worth knowing before reading a chart of it, both
+    measured over ten seeds in ``tests/test_pacing.py``:
+
+    * **The opening round is the expensive one.** Having won nothing yet, the bidder opens
+      on the full error, so the multiplier starts at ``1 + kp x target`` — above 1 for any
+      positive gain. It therefore opens by *overbidding*, and at kp = 8 it opens at triple
+      value and buys its first impression at a loss of 98 to 156.
+    * **The ringing does not show up in the win rate.** A loop banging between its two
+      stops integrates to a very accurate average: at kp = 8 the realised win rate sits on
+      0.33 against a target of 0.30, as close as the calm loop gets, and the win rate
+      actually overshoots *further* at low gain. Anyone reading the output alone would
+      call the ringing loop the better tuned one. The control variable is where to look.
+    """
+    me = context.bidder
+    error, accumulated, rate = _winrate_error(context, target_rate)
+    multiplier = clamp(1 + kp * error + ki * accumulated, 0, MAX_MULTIPLIER)
+    previous = clamp(1 + kp * _prior_error(context, target_rate), 0, MAX_MULTIPLIER)
+    bid = me.value * multiplier
+    standing = (
+        f"has won {rate:.0%} of {len(context.history)} rounds so far against a target of "
+        f"{target_rate:.0%}"
+        if context.history
+        else "has no rounds behind it yet, so it starts from the full error"
+    )
+    return BidDecision(
+        bid,
+        f"{me.id} bids value x {multiplier:.3f} = {num(bid)}. It {standing}, an error of "
+        f"{error:+.3f} with {accumulated:+.3f} accumulated, and the multiplier is "
+        f"{direction(multiplier, previous)}. This loop steers how often it wins rather "
+        "than how much it spends, and it is only as good as its gains: raise kp and it "
+        "will sail past the target and ring back and forth across it instead of settling.",
+        control=knob("multiplier", "Bid multiplier (PID)", multiplier, previous),
+    )
+
+
+def _winrate_error(
+    context: StrategyContext, target_rate: float
+) -> tuple[float, float, float]:
+    """This round's error, the accumulated error, and the win rate achieved so far.
+
+    The accumulated term sums one error per finished round, which is the discrete integral
+    a PI controller needs. It is replayed from history for the same reason mu is — the
+    strategy has nowhere to keep it between rounds.
+    """
+    wins = 0
+    accumulated = 0.0
+    rate = 0.0
+    for index, view in enumerate(context.history):
+        wins += view.winner == context.bidder.id
+        rate = wins / (index + 1)
+        accumulated += target_rate - rate
+    return target_rate - rate, accumulated, rate
+
+
+def _prior_error(context: StrategyContext, target_rate: float) -> float:
+    """Where the proportional term stood a round ago, so ``why`` can say which way it moved.
+
+    ponytail: the previous multiplier is reconstructed from the proportional term alone
+    rather than by replaying the whole controller a second time. Ceiling — on a round
+    where the integral term moved and the proportional one did not, the reported direction
+    is the proportional story rather than the whole one. Upgrade: have `_winrate_error`
+    return the running pair if the direction label ever needs to be exact.
+    """
+    if not context.history:
+        return target_rate
+    wins = sum(v.winner == context.bidder.id for v in context.history[:-1])
+    played = len(context.history) - 1
+    return target_rate - (wins / played if played else 0.0)

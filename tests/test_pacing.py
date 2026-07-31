@@ -16,6 +16,7 @@ rather than letting the neater scenario imply something false.
 
 import pytest
 
+from agt.pacing import MAX_MULTIPLIER
 from agt.series import run_series
 from agt.trace import Bidder
 from agt.world import World
@@ -231,7 +232,8 @@ def test_a_bigger_step_moves_mu_further_in_one_round():
     comes back, so its final value is a sample of the swing and says nothing on its own."""
 
     def biggest_jump(step):
-        path = [c["value"] for c in control(day("pace_multiplicative", {"step": step}, budget=BUDGET))]
+        s = day("pace_multiplicative", {"step": step}, budget=BUDGET)
+        path = [c["value"] for c in control(s)]
         return max(abs(b - a) for a, b in zip(path, path[1:]))
 
     assert biggest_jump(0.9) > biggest_jump(0.1)
@@ -262,3 +264,198 @@ def test_pacing_spreads_the_same_money_across_the_whole_day():
     half = len(blind.rounds) // 2
     assert spend(blind)[half] == spend(blind)[-1], "the blind bidder is done by half time"
     assert spend(paced)[half] < spend(paced)[-1], "the pacer is not"
+
+
+def win_flags(series, who="A"):
+    """1 for each round this bidder won, 0 otherwise — the signal `pid_winrate` steers."""
+    return [
+        1 if (r.trace is not None and r.trace.result["winner"] == who) else 0
+        for r in series.rounds
+    ]
+
+
+def trailing_rate(flags, window=6):
+    """Win rate over the last ``window`` rounds. A cumulative rate is dominated by the
+    startup transient and would hide exactly the ringing these tests are looking for."""
+    return [
+        sum(flags[max(0, i - window + 1) : i + 1]) / len(flags[max(0, i - window + 1) : i + 1])
+        for i in range(len(flags))
+    ]
+
+
+def mean(xs):
+    return sum(xs) / len(xs)
+
+
+def swing(path):
+    return max(path) - min(path)
+
+
+def reversals(path):
+    """How many times a path changes direction — the shape of a loop that rings."""
+    steps = [b - a for a, b in zip(path, path[1:]) if b != a]
+    return sum(1 for a, b in zip(steps, steps[1:]) if (a > 0) != (b > 0))
+
+
+# ------------------------------------------------------------------------ throttle
+#
+# Same steering law as pacing, different actuator: it moves *how often it enters* instead
+# of *how much it bids*. Both land on the budget. Only one of them buys well.
+
+
+def test_throttle_is_reproducible_under_a_fixed_seed():
+    a = day("throttle", budget=BUDGET, seed=3)
+    b = day("throttle", budget=BUDGET, seed=3)
+    c = day("throttle", budget=BUDGET, seed=4)
+    assert abstentions(a) == abstentions(b)
+    assert abstentions(a) != abstentions(c), "a different seed has to deal a different hand"
+
+
+def test_throttle_abstains_roughly_one_minus_p_of_the_time():
+    """Held at a fixed p — step 0 never steers — and with no budget to bar it, so the only
+    thing deciding whether it enters is the coin. Pooled over twenty seeds, because one
+    30-round day is far too few flips to tell 0.6 from 0.5."""
+    out = [
+        entry
+        for seed in range(1, 21)
+        for entry in abstentions(day("throttle", {"p_start": 0.4, "step": 0}, seed=seed))
+    ]
+    assert len(out) == 600
+    assert 0.55 < sum(out) / len(out) < 0.65
+
+
+def test_throttle_draws_from_the_context_stream_and_never_the_global_module():
+    """`agt.world` already asserts this for a whole series; this pins it on the one
+    strategy in this module that actually needs a coin."""
+    import random
+
+    random.seed(99)
+    before = random.getstate()
+    day("throttle", budget=BUDGET)
+    assert random.getstate() == before
+
+
+def test_throttle_publishes_its_entry_probability_where_a_chart_can_read_it():
+    knob = day("throttle", budget=BUDGET).rounds[-1].decisions["A"].control
+    assert knob["name"] == "p"
+    assert 0 <= knob["value"] <= 1
+    assert knob["direction"] in {"up", "down", "steady"}
+
+
+def test_throttle_lands_on_its_budget_like_pacing_does():
+    for seed in range(1, 6):
+        s = day("throttle", budget=BUDGET, seed=seed)
+        assert 0.6 < spend(s)[-1] / BUDGET <= 1.0
+
+
+# ------------------------------------------------- the comparison the phase exists for
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3, 4, 5])
+def test_throttle_buys_fewer_and_dearer_impressions_than_pacing(seed):
+    """The whole reason `throttle` is in this phase. Both bidders get the same budget, the
+    same market and — because value draws are keyed by bidder id and seed — the *same*
+    sequence of values. Only the rule differs.
+
+    Throttling pays full price for a randomly chosen subset. Pacing stays in every auction
+    with a shaded bid and so wins exactly the impressions its shading can still afford,
+    which are the cheap ones. Same budget, same spend, worse basket.
+    """
+    paced = day("pace_multiplicative", budget=BUDGET, seed=seed)
+    throttled = day("throttle", budget=BUDGET, seed=seed)
+    assert spend(throttled)[-1] == pytest.approx(spend(paced)[-1], rel=0.35)
+
+    dear, cheap = prices_paid(throttled), prices_paid(paced)
+    assert len(dear) < len(cheap), "throttling buys fewer impressions"
+    assert mean(dear) > mean(cheap), "and pays more for each of them"
+
+
+# --------------------------------------------------------------------- pid_winrate
+#
+# A control loop that rings is the lesson, not a defect to be smoothed away.
+
+
+def test_pid_winrate_holds_a_rate_a_truthful_bidder_blows_straight_past():
+    target = 0.3
+    held = mean(win_flags(day("pid_winrate", {"target_rate": target})))
+    greedy = mean(win_flags(day("truthful")))
+    assert greedy > 0.9, "the market is cheap enough that honesty wins nearly everything"
+    assert abs(held - target) < abs(greedy - target)
+    assert abs(held - target) < 0.15
+
+
+def test_pid_winrate_chases_a_higher_target_harder():
+    low = mean(win_flags(day("pid_winrate", {"target_rate": 0.2})))
+    high = mean(win_flags(day("pid_winrate", {"target_rate": 0.7})))
+    assert low < high
+
+
+def test_pid_winrate_publishes_the_multiplier_it_is_steering():
+    knob = day("pid_winrate").rounds[-1].decisions["A"].control
+    assert knob["name"] == "multiplier"
+    assert knob["direction"] in {"up", "down", "steady"}
+
+
+def test_a_high_proportional_gain_makes_the_multiplier_ring():
+    calm = [c["value"] for c in control(day("pid_winrate", {"kp": 1}))]
+    hot = [c["value"] for c in control(day("pid_winrate", {"kp": 8}))]
+    assert swing(hot) > swing(calm)
+    assert reversals(hot) > reversals(calm)
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3, 4, 5])
+def test_a_high_proportional_gain_slams_the_multiplier_into_both_stops(seed):
+    """The overshoot, asserted rather than hidden — and asserted where it actually lives.
+
+    At kp = 8 the multiplier does not approach a level, it bangs between its two limits:
+    3.0 one round, 0.0 the next, reversing direction roughly every round of the day. The
+    swing is the full range of the variable in 10 seeds out of 10.
+    """
+    path = [c["value"] for c in control(day("pid_winrate", {"kp": 8}, seed=seed))]
+    assert max(path) >= MAX_MULTIPLIER, "it saturates the top stop"
+    assert min(path) <= 0, "and the bottom one"
+    assert reversals(path) > len(path) / 2, "reversing course on most rounds of the day"
+
+
+def test_the_swing_grows_with_the_gain_all_the_way_to_saturation():
+    """Measured over ten seeds: swing runs 1.03-1.08 at kp 0.5, 1.18-1.24 at 1, 1.60 at 2,
+    2.20 at 4, and pins at the full 3.00 from kp 8 up."""
+    swings = [
+        swing([c["value"] for c in control(day("pid_winrate", {"kp": kp}))])
+        for kp in (0.5, 1, 2, 4)
+    ]
+    assert swings == sorted(swings), f"a harder gain has to swing further, got {swings}"
+
+
+def test_the_overshoot_is_paid_for_in_the_opening_round():
+    """Where a badly tuned loop actually costs money. Having won nothing yet, the bidder
+    opens on the full error, so a high kp opens by bidding several times its value and
+    buying an impression at a large loss. Measured across ten seeds, the opening round
+    loses 7-12 at kp 0.5 and 98-156 at kp 8."""
+
+    def opening_utility(kp):
+        return day("pid_winrate", {"kp": kp}).rounds[0].trace.result["utilities"]["A"]
+
+    assert opening_utility(8) < opening_utility(0.5) < 0
+    assert opening_utility(8) < -50, "a gain that high buys its first impression at a rout"
+
+
+def test_a_ringing_loop_still_averages_near_its_target_which_is_the_trap():
+    """The honest surprise, and the reason the test above measures the multiplier and not
+    the win rate. Asserting "high kp overshoots the *target*" was tried first and is
+    false: measured over ten seeds the realised win rate is 0.27-0.33 at kp 0.5 and
+    0.33-0.33 at kp 8, and the win-rate overshoot is *larger* at the low gain, not the
+    high one — trailing peaks of 0.50-0.83 against 0.33-0.50.
+
+    A bang-bang actuator integrates to a very accurate average. So the output alone says
+    the hot loop is the better tuned of the two, while it is in fact alternating between
+    bidding triple value and bidding nothing. Judge a controller by its control variable,
+    not only by the number it is holding.
+    """
+    target = 0.3
+    calm = mean(win_flags(day("pid_winrate", {"target_rate": target, "kp": 1})))
+    hot = mean(win_flags(day("pid_winrate", {"target_rate": target, "kp": 8})))
+    assert abs(hot - target) <= abs(calm - target) + 0.05, (
+        f"the ringing loop's output is not worse: calm {calm:.2f}, hot {hot:.2f}"
+    )
+    assert swing([c["value"] for c in control(day("pid_winrate", {"kp": 8}))]) > 2
