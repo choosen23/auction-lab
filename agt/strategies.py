@@ -74,6 +74,14 @@ class StrategyContext:
     ``rng``         this bidder's random stream for this round. A strategy that needs
                     randomness must draw from here and never from the global ``random``
                     module, or the series stops being reproducible from its seed.
+    ``own_values``  what this bidder's value was drawn at in each finished round, oldest
+                    first and aligned with ``history``. A learner scoring its own past
+                    decisions cannot do it without them: ``history`` records what it *bid*
+                    and what the round paid out, and utility is value minus price. This is
+                    not a hole in the privacy rule — it is the bidder's own value, the one
+                    thing it has always been allowed to know — and it stays a *list of its
+                    own*, never a column on :class:`RoundView`, precisely so that widening
+                    it can never accidentally hand somebody a rival's.
     """
 
     bidder: Bidder
@@ -88,6 +96,7 @@ class StrategyContext:
     spent: Number = 0
     rounds_left: int = 1
     rng: random.Random = field(default_factory=lambda: random.Random(0))
+    own_values: list[Number] = field(default_factory=list)
 
     @property
     def remaining(self) -> Number | None:
@@ -402,3 +411,4 @@ def _utility_if(
 # defined above, and because STRATEGIES is an ordered dict whose order the UI's dropdown
 # follows: the strategies that need no budget come first.
 from agt import pacing as _pacing  # noqa: E402,F401  (registers the budget pacers)
+from agt import bandits as _bandits  # noqa: E402,F401  (registers the two learners)

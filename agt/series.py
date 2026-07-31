@@ -20,6 +20,7 @@ from typing import Any
 
 from agt.mechanisms import REGISTRY, run
 from agt.registry import _resolve_params
+from agt.regret import regret_summary
 from agt.stages import num
 from agt.strategies import (
     STRATEGIES,
@@ -117,6 +118,10 @@ def run_series(
     history = []
     records: list[RoundRecord] = []
     spent: dict[str, Number] = {b.id: 0 for b in bidders}
+    # Each bidder's *own* past value draws, kept per bidder rather than on the shared
+    # history for the same reason `observe` exists: a value is private, and a list one
+    # bidder is handed cannot leak into another's context by being widened later.
+    drawn: dict[str, list[Number]] = {b.id: [] for b in bidders}
     for index in range(world.rounds):
         playing = [Bidder(b.id, world.value_for(b, index), b.bid) for b in bidders]
         decisions = {}
@@ -135,6 +140,7 @@ def run_series(
                 spent=spent[bidder.id],
                 rounds_left=world.rounds - index,
                 rng=world.rng_for("bid", bidder.id, index),
+                own_values=list(drawn[bidder.id]),
             )
             decisions[bidder.id] = _afford(decide(spec["name"], context, spec["params"]), context)
         # Abstainers are removed rather than entered at 0: a 0 clears a reserve of 0 and
@@ -155,8 +161,16 @@ def run_series(
         # observe() is the privacy seam: the next round's strategies see public bids and
         # the public outcome, never the values sitting in the trace.
         history.append(observe(index, trace))
+        for bidder in playing:
+            drawn[bidder.id].append(bidder.value)
 
-    return Series(mechanism, resolved, plan, records, _summarize(records, world, tolerance))
+    summary = _summarize(records, world, tolerance)
+    # Regret is asked for rather than assembled here: only a strategy that chooses between
+    # a declared grid of arms has a hindsight comparator, and `arm_grid` is what knows
+    # which strategies those are. A table with no learner in it gets no regret series at
+    # all, which is how the chart stays a consequence of the data rather than of a name.
+    summary.update(regret_summary(records, plan, bidders, mechanism, resolved, world))
+    return Series(mechanism, resolved, plan, records, summary)
 
 
 def _payments(trace: Trace | None) -> dict[str, Number]:
