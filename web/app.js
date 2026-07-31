@@ -102,6 +102,11 @@ function render(index) {
   // an allocation. No allocation, or the file not loaded, and nothing happens —
   // which is every single-winner mechanism.
   if (window.positionsExt && window.positionsExt.onRender) window.positionsExt.onRender(trace, app.index);
+
+  // Phase 3b seam. web/packages.js draws the bundle allocation when the trace
+  // hands out lists of items instead of slot numbers. The two are mutually
+  // exclusive by shape, so exactly one of them ever unhides.
+  if (window.packagesExt && window.packagesExt.onRender) window.packagesExt.onRender(trace, app.index);
 }
 
 function goTo(index) { stopPlaying(); render(index); }
@@ -740,6 +745,16 @@ async function runAuction() {
   stopPlaying();
   clearError();
 
+  // Phase 3b seam. A package mechanism is bid on in bundles, not scalar rows, so
+  // web/packages.js owns the whole submit path for those — it reads its own table
+  // and posts `packages` instead of `bidders`. It decides from the registry's
+  // declared input_kind, never from a mechanism name.
+  const packagesExt = window.packagesExt;
+  if (packagesExt && packagesExt.active && packagesExt.active()) {
+    await packagesExt.runAuction();
+    return;
+  }
+
   const bidders = readBidders();
   const problem = validateBidders(bidders);
   if (problem) { showError(problem); return; }
@@ -773,6 +788,9 @@ function wireControls() {
   $('mechanism').addEventListener('change', () => {
     renderParams(app.registry[$('mechanism').value]);
     clearError();
+    if (window.packagesExt && window.packagesExt.onMechanismChange) {
+      window.packagesExt.onMechanismChange();
+    }
   });
 
   $('add-bidder').addEventListener('click', () => {
@@ -836,6 +854,10 @@ async function boot() {
   // strategy column before the first run. Failure there is its own problem to
   // report — a single auction must still run.
   if (window.seriesExt && window.seriesExt.boot) await window.seriesExt.boot();
+
+  // Phase 3b seam: build the package table and put the setup panel into whichever
+  // mode the mechanism that happens to be selected calls for.
+  if (window.packagesExt && window.packagesExt.boot) window.packagesExt.boot();
 
   await runAuction();   // the default setup is meant to be useful the moment the page loads
 }

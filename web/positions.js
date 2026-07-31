@@ -47,6 +47,13 @@ function ladderRows(trace) {
   const allocation = result.allocation;
   if (!allocation || typeof allocation !== 'object' || Array.isArray(allocation)) return null;
 
+  // A combinatorial auction publishes an `allocation` too, but its values are the
+  // items a bidder won, not a slot index. The ladder is the numeric-slot view;
+  // web/packages.js draws the bundle view. The *shape* decides which one runs —
+  // reading the mechanism name here would break the one rule this file opens with.
+  const held = Object.values(allocation);
+  if (!held.length || !held.every((slot) => isNum(slot))) return null;
+
   const state = finalState(trace);
   const ctrs = Array.isArray(state.ctrs) ? state.ctrs : [];
   const prices = state.prices && typeof state.prices === 'object' ? state.prices : {};

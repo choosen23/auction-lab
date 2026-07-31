@@ -33,21 +33,47 @@
 
       <div class="params" id="params"></div>
 
-      <h3>Bidders</h3>
-      <div class="scroll-x">
-        <table class="bidder-table">
-          <thead>
-            <tr>
-              <th scope="col">Bidder</th>
-              <th scope="col">Value</th>
-              <th scope="col">Bid</th>
-              <th scope="col"><span class="visually-hidden">Remove</span></th>
-            </tr>
-          </thead>
-          <tbody id="bidder-rows"></tbody>
-        </table>
+      <div id="single-setup">
+        <h3>Bidders</h3>
+        <div class="scroll-x">
+          <table class="bidder-table">
+            <thead>
+              <tr>
+                <th scope="col">Bidder</th>
+                <th scope="col">Value</th>
+                <th scope="col">Bid</th>
+                <th scope="col"><span class="visually-hidden">Remove</span></th>
+              </tr>
+            </thead>
+            <tbody id="bidder-rows"></tbody>
+          </table>
+        </div>
+        <button type="button" class="ghost" id="add-bidder">+ Add bidder</button>
       </div>
-      <button type="button" class="ghost" id="add-bidder">+ Add bidder</button>
+
+      <!-- Combinatorial mechanisms only. web/packages.js swaps this in when the
+           selected mechanism declares input_kind "package". -->
+      <div id="package-setup" hidden>
+        <h3>Package bids</h3>
+        <p class="caption">One row per bundle. A bidder may enter several rows &mdash; those are
+          <strong>alternatives</strong>, and they can win at most one of them.</p>
+        <div class="scroll-x">
+          <table class="bidder-table package-table">
+            <thead>
+              <tr>
+                <th scope="col">Bidder</th>
+                <th scope="col">Items</th>
+                <th scope="col">Value</th>
+                <th scope="col">Bid</th>
+                <th scope="col"><span class="visually-hidden">Remove</span></th>
+              </tr>
+            </thead>
+            <tbody id="package-rows"></tbody>
+          </table>
+        </div>
+        <button type="button" class="ghost" id="add-package">+ Add package bid</button>
+        <p class="note" id="package-note"></p>
+      </div>
 
       <!-- Descriptions of whichever strategies are currently selected; web/series.js
            fills this from GET /strategies. -->
@@ -163,6 +189,18 @@
       <ul class="legend" id="ladder-legend"></ul>
     </section>
 
+    <!-- Combinatorial mechanisms only. web/packages.js unhides this when the
+         allocation hands out bundles of items rather than slot numbers. -->
+    <section class="card" id="packages-card" aria-labelledby="packages-h" hidden>
+      <h2 id="packages-h">Allocation</h2>
+
+      <div class="gap-panel" id="gap-panel"></div>
+      <p class="note" id="gap-note"></p>
+
+      <div class="scroll-x" id="bundle-table"></div>
+      <p class="caption" id="unsold-note"></p>
+    </section>
+
   </main>
 </div>
 
@@ -173,5 +211,6 @@
 <script src="app.js"></script>
 <script src="series.js"></script>
 <script src="positions.js"></script>
+<script src="packages.js"></script>
 </body>
 </html>

@@ -582,3 +582,50 @@ table { border-collapse: collapse; width: 100%; }
 .ladder-track .seg-utility { background: var(--series-value); }
 
 .ladder-total { flex: none; font-size: 11px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+/* =========================================================================
+   Phase 3b — combinatorial auctions.
+
+   The gap bars reuse the same two-step ordinal ramp as the slot ladder rather
+   than opening a third colour language on one page: the strong step is what
+   greedy achieved, the light step what was available. Identity comes from each
+   row's own text label, so there is no legend and nothing is encoded by colour
+   alone.
+   ========================================================================= */
+
+.package-table td.items-cell input { min-width: 12ch; }
+.package-table tr.xor-alt td { background: color-mix(in srgb, var(--series-value) 9%, transparent); }
+
+.xor-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  color: var(--ink-2);
+  background: color-mix(in srgb, var(--series-value) 22%, transparent);
+  vertical-align: middle;
+}
+
+.gap-hero { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.gap-figure { font-size: 30px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.gap-caption { font-size: 12px; color: var(--ink-2); }
+
+.gap-bars { display: grid; gap: 7px; }
+.gap-row { display: grid; grid-template-columns: minmax(0, 11ch) minmax(0, 1fr) auto; gap: 9px; align-items: center; }
+.gap-label { font-size: 11px; color: var(--ink-2); }
+.gap-plot { min-width: 0; }
+
+.gap-bar {
+  display: block;
+  height: 14px;
+  /* Rounded data-end, square at the baseline — same as every other bar here. */
+  border-radius: 0 4px 4px 0;
+}
+.gap-bar.is-greedy  { background: var(--series-bid); }
+.gap-bar.is-optimal { background: var(--series-value); }
+
+.gap-value { font-size: 11px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+.bundle-table td.items-cell { color: var(--ink); }
