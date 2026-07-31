@@ -973,3 +973,94 @@ def test_post_unknown_route_is_a_json_404(client):
     status, _, raw = fetch(client, "POST", "/nope", json.dumps(GOOD))
     assert status == 404
     assert "error" in as_json(raw)
+
+
+# ------------------------------------------------------------------ the world (phase 4)
+#
+# `/run_series` grows one optional `world` key: value draws, budgets, and a seed. Its
+# absence has to stay exactly the phase 2 request, because that is what the whole seam
+# was built to guarantee.
+
+WORLD_BODY = {
+    "mechanism": "second_price",
+    "bidders": [
+        {"id": "A", "value": 100, "bid": 95},
+        {"id": "B", "value": 72, "bid": 72},
+    ],
+    "strategies": {
+        "A": {"name": "pace_multiplicative", "params": {}},
+        "B": {"name": "truthful", "params": {}},
+    },
+    "rounds": 6,
+}
+
+
+def test_a_body_with_no_world_is_still_accepted():
+    assert serve.validate_series(WORLD_BODY)["world"] is None
+
+
+def test_a_world_is_read_back_with_its_rounds_from_the_request():
+    valid = serve.validate_series({**WORLD_BODY, "world": {
+        "seed": 3, "value_low": 10, "value_high": 90, "budgets": {"A": 200},
+    }})
+    world = valid["world"]
+    assert (world.seed, world.value_low, world.value_high) == (3, 10, 90)
+    assert world.budgets == {"A": 200}
+    assert world.rounds == 6      # the request's `rounds`, not a second source of truth
+
+
+@pytest.mark.parametrize("world,message", [
+    ({"value_low": 90, "value_high": 10}, "value_low"),
+    ({"value_low": 10}, "both"),
+    ({"value_high": 10}, "both"),
+    ({"value_low": -5, "value_high": 10}, "non-negative"),
+    ({"value_low": 1, "value_high": float("inf")}, "finite"),
+    ({"seed": 1.5}, "whole number"),
+    ({"seed": True}, "whole number"),
+    ({"budgets": {"Z": 10}}, "not a bidder"),
+    ({"budgets": {"A": -1}}, "non-negative"),
+    ({"budgets": []}, "object"),
+    ("nope", "object"),
+])
+def test_a_bad_world_is_refused_with_a_readable_reason(world, message):
+    with pytest.raises(ValueError, match=message):
+        serve.validate_series({**WORLD_BODY, "world": world})
+
+
+def test_a_package_mechanism_is_still_refused_even_with_a_world():
+    """The phase 3 refusal comes first: a strategy produces one number, which means
+    nothing over bundles, whatever world it would have run in."""
+    with pytest.raises(ValueError, match="round"):
+        serve.validate_series({
+            "mechanism": "vcg_package",
+            "packages": [{"bidder": "A", "items": ["x"], "value": 5, "bid": 5}],
+            "strategies": {"A": {"name": "truthful", "params": {}}},
+            "world": {"seed": 1},
+        })
+
+
+def test_running_a_world_series_end_to_end_reports_spend():
+    status, body = serve.run_series_payload({**WORLD_BODY, "world": {
+        "seed": 1, "value_low": 20, "value_high": 80, "budgets": {"A": 60},
+    }})
+    assert status == 200
+    assert body["summary"]["budgets"] == {"A": 60}
+    assert body["summary"]["spend"]["A"][-1] <= 60
+    json.dumps(body)     # the browser has to be able to parse whatever we send
+
+
+def test_the_worst_case_world_series_finishes_quickly():
+    """Learners re-run the mechanism per arm, so the expensive path is bounded and
+    measured rather than assumed."""
+    body = {
+        "mechanism": "second_price",
+        "bidders": [{"id": f"B{i}", "value": 100, "bid": 50} for i in range(12)],
+        "strategies": {f"B{i}": {"name": "bandit_ucb", "params": {}} for i in range(12)},
+        "rounds": 50,
+        "world": {"seed": 1, "value_low": 10, "value_high": 100},
+    }
+    start = time.perf_counter()
+    status, _ = serve.run_series_payload(body)
+    elapsed = time.perf_counter() - start
+    assert status == 200
+    assert elapsed < 5, f"worst-case world series took {elapsed:.2f}s"

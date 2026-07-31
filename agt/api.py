@@ -31,6 +31,7 @@ from agt.packages import MAX_BIDS, MAX_ITEMS, PackageBid
 from agt.series import MAX_ROUNDS, refuse_repeated_rounds, run_series
 from agt.strategies import STRATEGIES
 from agt.trace import Bidder
+from agt.world import World
 
 # 12 is where the visualization stops being readable; it also bounds compute.
 MAX_BIDDERS = 12
@@ -72,6 +73,7 @@ def validate_series(payload: Any) -> dict[str, Any]:
     valid = validate(payload)
     valid["rounds"] = _rounds(payload.get("rounds"))
     valid["strategies"] = _strategies(payload.get("strategies"), valid["bidders"])
+    valid["world"] = _world(payload.get("world"), valid["rounds"], valid["bidders"])
     return valid
 
 
@@ -277,6 +279,78 @@ def _bidder(index: int, entry: Any) -> Bidder:
     )
 
 
+def _world(given: Any, rounds: int, bidders: list[Any]) -> World | None:
+    """The optional day a series runs inside: value draws, budgets, and a seed.
+
+    ``None`` means the phase 2 series — values fixed, no budgets — which is the whole
+    point of the world being optional, so an absent key is not an error and not a
+    silently-substituted default either.
+
+    ``rounds`` comes from the request, never from the world body: pacing steers on how
+    many rounds are left, so a horizon disagreeing with the loop would make every pacer
+    quietly wrong.
+    """
+    if given is None:
+        return None
+    if not isinstance(given, dict):
+        raise ValueError(f"world must be a JSON object, got {given!r:.60}")
+
+    unknown = set(given) - {"seed", "value_low", "value_high", "budgets"}
+    if unknown:
+        raise ValueError(
+            f"world has unknown parameter(s) {sorted(unknown)}; expected any of "
+            "['budgets', 'seed', 'value_high', 'value_low']"
+        )
+
+    low, high = given.get("value_low"), given.get("value_high")
+    if (low is None) != (high is None):
+        raise ValueError(
+            "value_low and value_high must both be given or both left out — half a "
+            "range says nothing about where values come from"
+        )
+    if low is not None:
+        low = _number("world value_low", low)
+        high = _number("world value_high", high)
+        if low > high:
+            raise ValueError(f"world value_low ({low}) must not exceed value_high ({high})")
+
+    # `or {}` would be wrong here: an empty list is falsy, so a caller sending
+    # "budgets": [] would have it silently become a valid empty mapping.
+    budgets = given.get("budgets")
+    budgets = {} if budgets is None else budgets
+    if not isinstance(budgets, dict):
+        raise ValueError(f"world budgets must be a JSON object, got {budgets!r:.60}")
+    known = {b.id for b in bidders}
+    for who, amount in budgets.items():
+        if who not in known:
+            raise ValueError(
+                f"world budget names {who!r}, which is not a bidder in this auction "
+                f"({sorted(known)})"
+            )
+        _number(f"world budget for {who!r}", amount)
+
+    return World(
+        rounds=rounds,
+        seed=_seed(given.get("seed")),
+        value_low=low,
+        value_high=high,
+        budgets=dict(budgets),
+    )
+
+
+def _seed(value: Any) -> int:
+    """A whole number, so the same request replays the same day."""
+    if value is None:
+        return 0
+    whole = isinstance(value, int) and not isinstance(value, bool)
+    whole = whole or (isinstance(value, float) and value.is_integer())
+    if not whole:
+        raise ValueError(f"world seed must be a whole number, got {value!r:.60}")
+    if not 0 <= value < 2**32:
+        raise ValueError(f"world seed must be between 0 and 2^32, got {value!r:.60}")
+    return int(value)
+
+
 def _number(where: str, x: Any) -> float:
     # bool is an int subclass, and ``True`` as a bid would silently become 1.
     if isinstance(x, bool) or not isinstance(x, (int, float)):
@@ -339,6 +413,7 @@ def run_series_payload(payload: Any) -> tuple[int, dict[str, Any]]:
             valid["strategies"],
             valid["rounds"],
             valid["params"],
+            world=valid["world"],
         )
     except ValueError as exc:
         return 400, {"error": str(exc)}
