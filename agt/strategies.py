@@ -15,6 +15,7 @@ is the opposite of what this tool exists to show.
 """
 
 import copy
+import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -62,6 +63,17 @@ class StrategyContext:
     ``history``   every finished round, oldest first, narrowed by :func:`observe`.
     ``mechanism`` the mechanism name, so a strategy can say when it is the wrong tool.
     ``params``    the mechanism's resolved params (reserve, and so on).
+
+    The rest is the world the series runs in — see :mod:`agt.world`. Every one of them
+    defaults to the phase 2 answer, so a strategy that ignores them behaves as it always
+    did:
+
+    ``budget``      money for the whole series, or ``None`` for no limit at all.
+    ``spent``       what this bidder has actually paid so far, from realised payments.
+    ``rounds_left`` rounds remaining *including* this one, so pacing can divide by it.
+    ``rng``         this bidder's random stream for this round. A strategy that needs
+                    randomness must draw from here and never from the global ``random``
+                    module, or the series stops being reproducible from its seed.
     """
 
     bidder: Bidder
@@ -72,6 +84,15 @@ class StrategyContext:
     history: list[RoundView]
     mechanism: str
     params: dict[str, Any] = field(default_factory=dict)
+    budget: Number | None = None
+    spent: Number = 0
+    rounds_left: int = 1
+    rng: random.Random = field(default_factory=lambda: random.Random(0))
+
+    @property
+    def remaining(self) -> Number | None:
+        """Budget still unspent, or ``None`` when there is no budget to run out of."""
+        return None if self.budget is None else self.budget - self.spent
 
 
 @dataclass(frozen=True)
@@ -80,17 +101,26 @@ class BidDecision:
 
     ``considered`` records the candidates a searching strategy weighed and what each was
     worth, so the UI can show the deliberation rather than only the conclusion.
+
+    ``abstain`` says the bidder did not enter this round's auction at all, and the runner
+    drops it from the bidder list before running the mechanism. This is deliberately not
+    expressed as a bid of 0: a 0 is a real bid, it clears a reserve of 0, and it can
+    *win the item at a price of 0* — an impression that never happened. ``bid`` is still
+    recorded when abstaining, because what a bidder wanted to bid and could not afford is
+    the interesting half of the story.
     """
 
     bid: Number
     why: str
     considered: list[dict[str, Any]] | None = None
+    abstain: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "bid": self.bid,
             "why": self.why,
             "considered": copy.deepcopy(self.considered),
+            "abstain": self.abstain,
         }
 
 
@@ -154,12 +184,19 @@ def decide(
     return spec.fn(context, **resolved)
 
 
-def observe(round_index: int, trace: Trace) -> RoundView:
+def observe(round_index: int, trace: Trace | None) -> RoundView:
     """Narrow a finished round to what a strategy may remember: public bids and outcome.
 
     This function is the privacy seam. ``trace.bidders`` carries private values; the
     view it returns does not, so no amount of history digging can reach one.
+
+    ``trace`` is ``None`` when every bidder abstained and no auction ran. That round
+    still happened, so it still gets a view — an empty one, with nobody bidding and
+    nobody winning. Dropping it instead would slide history out of step with the round
+    numbers, and "nobody entered" is information a strategy is entitled to.
     """
+    if trace is None:
+        return RoundView(round=round_index, bids={}, winner=None, price=0)
     return RoundView(
         round=round_index,
         bids={b.id: b.bid for b in trace.bidders},
