@@ -859,6 +859,9 @@ async function boot() {
   // mode the mechanism that happens to be selected calls for.
   if (window.packagesExt && window.packagesExt.boot) window.packagesExt.boot();
 
+  // Phase 4 seam: the budget column tracks whatever bidders exist.
+  if (window.campaignExt && window.campaignExt.boot) window.campaignExt.boot();
+
   await runAuction();   // the default setup is meant to be useful the moment the page loads
 }
 

@@ -629,3 +629,33 @@ table { border-collapse: collapse; width: 100%; }
 .gap-value { font-size: 11px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 
 .bundle-table td.items-cell { color: var(--ink); }
+
+/* =========================================================================
+   Phase 4 — the day: budgets, spend, and what steers them.
+
+   The line charts reuse the categorical slot colours from the bid-path chart,
+   so a bidder keeps one hue across every chart on the page. Budget ceilings are
+   the same hue dashed, because a budget is not a second entity — it is that
+   bidder's own limit.
+   ========================================================================= */
+
+.world-box { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.world-box summary { cursor: pointer; font-size: 12px; color: var(--ink-2); }
+.world-box > .caption { margin: 8px 0; }
+.world-fields { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.world-fields .field { flex: 1 1 5.5rem; min-width: 0; }
+.budget-table td:first-child { color: var(--ink-2); white-space: nowrap; }
+
+.chart-figure { margin: 0 0 20px; }
+.chart-figure:last-child { margin-bottom: 0; }
+.chart-figure .caption { margin-top: 6px; }
+
+.line-chart { width: 100%; height: auto; display: block; }
+.line-chart .grid { stroke: var(--line); stroke-width: 1; }
+.line-chart .tick, .line-chart .axis-title { font-size: 10px; fill: var(--ink-muted); }
+.line-chart .end-label { font-size: 10px; }
+.line-chart .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+/* A budget is a ceiling, not a measurement — dashed says "this is the limit". */
+.line-chart .line.is-dashed { stroke-dasharray: 4 4; stroke-width: 1.5; opacity: 0.75; }
+/* 2px surface ring so overlapping dots stay countable. */
+.line-chart .dot { stroke: var(--surface); stroke-width: 2; }

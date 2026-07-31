@@ -234,6 +234,9 @@ async function runSeries() {
         strategies: readStrategies(),
         rounds,
         params: readParams(),
+        // Phase 4 seam. `undefined` drops out of JSON.stringify entirely, so with
+        // no world configured this is byte-for-byte the phase 2 request.
+        world: (window.campaignExt && window.campaignExt.readWorld()) || undefined,
       }),
     });
     loadSeries(data, Object.fromEntries(bidders.map((b) => [b.id, b.bid])));
@@ -247,12 +250,29 @@ async function runSeries() {
   }
 }
 
+/** The bidders in this series, in setup order — which is the colour slot order.
+ *
+ *  A round with `trace: null` is a real outcome ("no auction — nobody entered"),
+ *  so the roster cannot be read off round 0 unconditionally. Prefer the first
+ *  round that ran; if none did, every bidder is still named in `decisions`, with
+ *  its value unknown because it never entered anything.
+ */
+function rosterOf(data) {
+  const ran = data.rounds.find((r) => r.trace && Array.isArray(r.trace.bidders));
+  if (ran) return ran.trace.bidders;
+  return Object.keys(data.rounds[0].decisions || {}).map((id) => ({ id, value: null }));
+}
+
 function loadSeries(data, typedBids) {
   if (!data || !Array.isArray(data.rounds) || data.rounds.length === 0) {
     throw new Error('The server returned a series with no rounds.');
   }
 
-  const bidders = data.rounds[0].trace.bidders || [];
+  // A round where every bidder sat out has no auction and no trace, and with
+  // budgets that can be round 0. Take the bidder roster from the first round that
+  // actually ran, and fall back to the decisions — every bidder is listed there
+  // whether it entered or not.
+  const bidders = rosterOf(data);
   series.data = data;
   series.order = bidders.map((b) => b.id);
   series.values = Object.fromEntries(bidders.map((b) => [b.id, b.value]));
@@ -268,6 +288,12 @@ function loadSeries(data, typedBids) {
   renderSeriesStats();
   renderPathLegend();
   renderPathTable();
+
+  // Phase 4 seam. web/campaign.js draws spend, win rate, the steering variable and
+  // regret — each because the summary carries that series, never because of a
+  // strategy name. A phase 2 series carries none of them and nothing appears.
+  if (window.campaignExt && window.campaignExt.onSeries) window.campaignExt.onSeries(data, series.order);
+
   selectRound(0);
 }
 
@@ -277,7 +303,8 @@ function selectRound(index) {
   stopPlaying();
   series.round = clamp(index, 0, series.data.rounds.length - 1);
 
-  app.trace = series.data.rounds[series.round].trace;
+  const record = series.data.rounds[series.round];
+  app.trace = record.trace;
   // One axis for every round, for the same reason app.js uses one axis for every
   // step: walking the timeline should move the bars, not the ruler.
   app.scale = series.barScale;
@@ -285,13 +312,41 @@ function selectRound(index) {
   renderTimeline();
   renderPathChart();
   renderDecisions();
-  render(0);                    // ← the untouched phase 1 renderer
+
+  // app.js's render() returns quietly on a null trace, which would leave the
+  // *previous* round's steps on screen — a round that never happened, shown as
+  // though it had. Say what actually happened instead.
+  if (record.trace) render(0);      // ← the untouched phase 1 renderer
+  else renderNoAuction();
+
+  if (window.campaignExt && window.campaignExt.onRound) window.campaignExt.onRound(series.data, series.round);
+}
+
+/** Nobody entered this round: every bidder was out of budget or chose to sit out.
+ *  A real outcome in a paced campaign, and not an error. */
+function renderNoAuction() {
+  $('step-count').textContent = `Round ${series.round + 1} — no auction`;
+  $('step-h').textContent = 'Nobody entered';
+  $('step-detail').textContent =
+    'Every bidder sat this round out — out of budget, or throttled into skipping it. ' +
+    'There was no auction to run, so nothing was sold and nobody paid anything.';
+  $('step-formula').hidden = true;
+  $('step-stage').hidden = true;
+  for (const id of ['result-card', 'ladder-card', 'packages-card']) {
+    const card = $(id);
+    if (card) card.hidden = true;
+  }
+  $('chart').replaceChildren();
+  $('state-chips').replaceChildren();
+  $('legend').replaceChildren();
+  renderTransport(null, 0);
 }
 
 /** app.js sizes the bar chart's axis to one trace; a series needs the widest. */
 function widestTraceScale(data) {
   let widest = { max: 1, step: 1 };
   for (const record of data.rounds) {
+    if (!record.trace) continue;         // a round nobody entered has nothing to scale
     const scale = traceScale(record.trace);
     if (scale.max > widest.max) widest = scale;
   }
@@ -415,7 +470,13 @@ function pathScale(data) {
   for (const path of Object.values(data.summary.bid_paths || {})) {
     for (const v of path) if (isNum(v)) seen.push(v);
   }
-  for (const bidder of data.rounds[0].trace.bidders || []) if (isNum(bidder.value)) seen.push(bidder.value);
+  // Values are redrawn every round once a world is in play, so the ruler has to
+  // cover every round's draws, not just the first one's.
+  for (const record of data.rounds) {
+    for (const bidder of (record.trace && record.trace.bidders) || []) {
+      if (isNum(bidder.value)) seen.push(bidder.value);
+    }
+  }
   return niceScale(Math.max(...seen), PATH.ticks);
 }
 

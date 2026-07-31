@@ -91,6 +91,41 @@
         <button type="button" class="primary" id="run-series">Run series</button>
       </div>
 
+      <!-- Phase 4. Off by default: with no world, a series is exactly the phase 2
+           series, values fixed and nobody on a budget. -->
+      <details class="world-box" id="world-box">
+        <summary>Run it as a day with budgets</summary>
+        <p class="caption">Each round becomes one impression with a freshly drawn value, and
+          bidders spend from a budget that runs out. This is what pacing is for.</p>
+
+        <div class="world-fields">
+          <div class="field">
+            <label for="value-low">Value from</label>
+            <input type="number" id="value-low" min="0" step="any" value="40">
+          </div>
+          <div class="field">
+            <label for="value-high">to</label>
+            <input type="number" id="value-high" min="0" step="any" value="100">
+          </div>
+          <div class="field">
+            <label for="world-seed">Seed</label>
+            <input type="number" id="world-seed" min="0" step="1" value="1">
+          </div>
+        </div>
+
+        <div class="scroll-x">
+          <table class="bidder-table budget-table">
+            <thead>
+              <tr>
+                <th scope="col">Bidder</th>
+                <th scope="col">Budget (blank = unlimited)</th>
+              </tr>
+            </thead>
+            <tbody id="budget-rows"></tbody>
+          </table>
+        </div>
+      </details>
+
       <p class="error" id="setup-error" role="alert" hidden></p>
     </section>
 
@@ -131,6 +166,15 @@
         <div class="scroll-x" id="path-table"></div>
         <p class="note" id="path-totals"></p>
       </details>
+    </section>
+
+    <!-- Phase 4. web/campaign.js unhides this when the summary carries spend,
+         a control variable, or regret — never because of a strategy name. -->
+    <section class="card" id="campaign-card" aria-labelledby="campaign-h" hidden>
+      <h2 id="campaign-h">The day</h2>
+      <p class="caption" id="campaign-caption"></p>
+      <div class="stat-row" id="campaign-stats"></div>
+      <div id="campaign-charts"></div>
     </section>
 
     <section class="card" aria-labelledby="step-h">
@@ -212,5 +256,6 @@
 <script src="series.js"></script>
 <script src="positions.js"></script>
 <script src="packages.js"></script>
+<script src="campaign.js"></script>
 </body>
 </html>
