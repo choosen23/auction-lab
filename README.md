@@ -26,6 +26,49 @@ JS. `--port` changes the port.
 All support a `reserve` price. A reserve that blocks the sale is flagged inefficient — that cost is
 the point.
 
+## Selling more than one thing (phase 3)
+
+**Position auctions** sell several ad slots to the same scalar per-click bids. Slot *i* gets
+`ctr_decay ** i` of the clicks slot 0 gets.
+
+| Name | Rule |
+|---|---|
+| `gsp` | Slots go to the highest bids; each winner pays the **next bidder's** bid per click |
+| `vcg_positions` | Same allocation, but each winner pays the externality they impose |
+
+They exist to be compared. On identical input they allocate *identically* and charge differently —
+and only one of them is truthful:
+
+| A values clicks at 10, B bids 8, C bids 2, two slots | honest (bid 10) | lying (bid 3) |
+|---|---|---|
+| `gsp` | slot 0, pays 8, utility **2** | slot 1, pays 1, utility **4** ← lying wins |
+| `vcg_positions` | slot 0, pays 5, utility **5** ← honesty wins | slot 1, pays 1, utility 4 |
+
+Sponsored search runs GSP anyway. Set `slots=1` and both collapse to second-price.
+
+**Combinatorial auctions** sell bundles. Bidders submit XOR package bids — several bundles each,
+winning at most one — and the item universe is whatever items get named.
+
+| Name | Rule |
+|---|---|
+| `greedy_package` | Take bids highest-first, skip conflicts, winners pay their own bid |
+| `vcg_package` | Solve for the *optimal* allocation, charge VCG prices |
+
+Finding the best allocation is NP-hard, so the practical algorithm is greedy — and greedy leaves
+money on the table. Both mechanisms report the gap:
+
+| A wants `{north, south}` for 10, B wants `{north}` for 6, C wants `{south}` for 6 | |
+|---|---|
+| greedy | takes A's single big bid, then is blocked — welfare **10**, inefficient |
+| optimal | splits the pair between B and C — welfare **12**, efficient |
+
+VCG's truthfulness depends on the allocation being optimal, which is why running VCG payments on
+top of a greedy allocation quietly breaks it. That is a real trap, not a footnote.
+
+Inputs are bounded at 20 package bids and 12 distinct items — the exhaustive search is exponential,
+and the auction says out loud how big a problem it will solve exactly rather than hanging inside a
+request.
+
 ## Strategies (phase 2)
 
 Each bidder can pick how it chooses its bid, and you can run repeated rounds to watch those choices
@@ -82,12 +125,23 @@ rendering path.
 | `agt/registry.py` | Mechanism registry, param schemas, `run()` |
 | `agt/stages.py` | Step generators shared across mechanisms |
 | `agt/mechanisms.py` | The five mechanisms |
+| `agt/positions.py` | GSP and VCG position auctions |
+| `agt/winner_determination.py` | `PackageBid` and the greedy / optimal set-packing solvers |
+| `agt/packages.py` | The two combinatorial mechanisms |
 | `agt/strategies.py` | Strategy registry and the four bidders |
 | `agt/series.py` | `run_series()`: rounds, history, convergence |
 | `agt/api.py` | Request validation and the JSON-in/JSON-out endpoint bodies |
 | `agt/serve.py` | stdlib HTTP server: routing, static files, byte caps |
 | `web/app.js` | Step renderer (phase 1) |
 | `web/series.js` | Round timeline, bid-path chart, decision panel (phase 2) |
+| `web/positions.js` | Slot ladder (phase 3a) |
+| `web/packages.js` | Package bid table, bundle allocation, welfare gap (phase 3b) |
+
+Each phase added its view as an **additive seam** rather than by editing the renderer: `app.js`
+gained a handful of `if (window.someExt)` lines and nothing else. Which view appears is decided by
+the *shape* of the trace — numeric `allocation` values mean slots, lists of items mean bundles,
+neither means a single winner — so the rule that no JavaScript branches on a mechanism name still
+holds at three views deep.
 
 ## Adding a mechanism
 
@@ -97,6 +151,7 @@ mechanism and its parameters appear on their own.
 
 ```python
 @mechanism("third_price", label="Third-price", description="...",
+           truthful_dominant=False,
            params={"reserve": {"type": "number", "default": 0, "label": "Reserve price", "min": 0}})
 def third_price(bidders, reserve=0):
     yield step("collect bids", "Each bidder submits one sealed bid.",
@@ -105,9 +160,19 @@ def third_price(bidders, reserve=0):
     return outcome(bidders, winner=..., payments=...)
 ```
 
+`truthful_dominant` is required — a mechanism has to answer whether honesty is dominant under it,
+because the strategy explanations shown to the reader depend on the answer. It is declared here
+rather than kept in a list inside `agt/strategies.py`, which is what stopped VCG from being told,
+falsely, that bidding your value hands the surplus to the seller.
+
+Add `input_kind="package"` for a mechanism bid on in bundles; it then receives `PackageBid`s and
+the form switches itself. Multi-winner mechanisms return `outcome_allocation(...)` instead, which
+takes an allocation and the gross gains rather than one winner.
+
 The cross-mechanism invariant tests are parametrized over the registry, so a new mechanism
 inherits them automatically. It also gets a working `best_response` bidder for free, since that
-strategy evaluates candidates by running whatever mechanism it was handed.
+strategy evaluates candidates by running whatever mechanism it was handed — that is how GSP
+acquired best-response dynamics without a line of new strategy code.
 
 ## Adding a strategy
 
@@ -140,17 +205,16 @@ Phase 2 adds a test that no strategy can reach a rival's private value, and test
 dynamics above by *direction* rather than by exact bid sequence — the path is an implementation
 detail, but "second-price settles on truth" and "first-price settles below value" are not.
 
+Phase 3 pins the untruthfulness of `gsp` and `greedy_package` with **explicitly constructed
+profitable deviations**, not by leaving them off a list. A mechanism that was silently truthful
+would be wrong, and only an asserted deviation catches that. The exhaustive solver is also
+cross-checked against naive subset enumeration over hundreds of random instances.
+
 ## Roadmap
 
-Phases 1 and 2 are done: single-item mechanisms, and bidder strategies over repeated rounds. Next:
-multi-item (VCG, GSP, combinatorial), ad-tech budget pacing, and equilibrium analysis. See
-`docs/superpowers/specs/`.
-
-Phase 3a is in: `gsp` and `vcg_positions` sell several ad slots at once to the same scalar
-per-click bids, allocating identically and charging differently. `@mechanism` now takes
-`truthful_dominant`, so whether honesty is dominant is declared by the mechanism rather than kept
-in a list inside `agt/strategies.py` — which is what stopped VCG from being told, falsely, that
-bidding your value hands the surplus to the seller.
+Phases 1–3 are done: single-item mechanisms, bidder strategies over repeated rounds, position
+auctions, and combinatorial auctions. Next: ad-tech budget pacing and bandit bidders, then
+equilibrium analysis. See `docs/superpowers/specs/`.
 
 ## Prior art
 
