@@ -13,6 +13,7 @@ is why nothing below it asks whether a world was given.
 """
 
 import copy
+import dataclasses
 import math
 from dataclasses import dataclass
 from typing import Any
@@ -179,13 +180,20 @@ def _afford(decision: BidDecision, context: StrategyContext) -> BidDecision:
     remaining = context.remaining
     if decision.abstain or remaining is None or decision.bid <= remaining:
         return decision
-    return BidDecision(
-        decision.bid,
-        f"{context.bidder.id} wanted to bid {num(decision.bid)} but has only "
-        f"{num(remaining)} left of its {num(context.budget)} budget, so it does not enter "
-        "this round at all: a bidder may not submit a bid it could not pay in full. It "
-        "does not bid 0 instead — a 0 is a real bid that could win the item for nothing.",
-        considered=decision.considered,
+    # `replace` rather than a fresh BidDecision: barring a bidder changes whether it
+    # entered and why, and nothing else. Everything the strategy published about the
+    # decision — what it weighed, what it is steering — describes a decision it really
+    # made, and a control variable that vanished on the rounds a bidder was barred would
+    # leave a hole in the one chart drawn to show the loop settling.
+    return dataclasses.replace(
+        decision,
+        why=(
+            f"{context.bidder.id} wanted to bid {num(decision.bid)} but has only "
+            f"{num(remaining)} left of its {num(context.budget)} budget, so it does not "
+            "enter this round at all: a bidder may not submit a bid it could not pay in "
+            "full. It does not bid 0 instead — a 0 is a real bid that could win the item "
+            "for nothing."
+        ),
         abstain=True,
     )
 

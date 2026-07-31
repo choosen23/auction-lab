@@ -108,12 +108,25 @@ class BidDecision:
     *win the item at a price of 0* — an impression that never happened. ``bid`` is still
     recorded when abstaining, because what a bidder wanted to bid and could not afford is
     the interesting half of the story.
+
+    ``control`` is the one number a self-steering strategy is currently steering — the
+    pacing multiplier mu, a throttle's entry probability, a controller's gain-adjusted
+    multiplier. It is published as data rather than only described in ``why`` so a chart
+    can draw the loop settling without re-deriving it from the bids, which would be both
+    fragile and a different quantity. ``None`` is a real answer: a strategy that steers
+    nothing has no knob, and drawing one for it would invent a decision it never made.
+    A strategy that does publish one uses::
+
+        {"name": "mu", "label": "...", "value": 0.37, "previous": 0.44, "direction": "down"}
+
+    where ``name`` identifies the series across rounds and ``value`` is what to plot.
     """
 
     bid: Number
     why: str
     considered: list[dict[str, Any]] | None = None
     abstain: bool = False
+    control: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -121,6 +134,7 @@ class BidDecision:
             "why": self.why,
             "considered": copy.deepcopy(self.considered),
             "abstain": self.abstain,
+            "control": copy.deepcopy(self.control),
         }
 
 
@@ -380,3 +394,11 @@ def _utility_if(
     except ValueError:
         return None
     return trace.result["utilities"][context.bidder.id]
+
+
+# Registration is an import side effect, exactly as it is for the mechanisms, so the
+# strategies that live in their own modules have to be imported for STRATEGIES to know
+# about them. The import sits at the bottom because those modules import the decorator
+# defined above, and because STRATEGIES is an ordered dict whose order the UI's dropdown
+# follows: the strategies that need no budget come first.
+from agt import pacing as _pacing  # noqa: E402,F401  (registers the budget pacers)
