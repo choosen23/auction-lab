@@ -33,6 +33,15 @@
 
       <div class="params" id="params"></div>
 
+      <!-- web/random.js fills whichever setup table the selected mechanism uses. -->
+      <div class="rand-row">
+        <div class="field rounds-field">
+          <label for="rand-count">Bidders</label>
+          <input type="number" id="rand-count" min="1" max="8" step="1" value="3">
+        </div>
+        <button type="button" id="randomize">&#x1F3B2; Randomize</button>
+      </div>
+
       <div id="single-setup">
         <h3>Bidders</h3>
         <div class="scroll-x">
@@ -257,5 +266,6 @@
 <script src="positions.js"></script>
 <script src="packages.js"></script>
 <script src="campaign.js"></script>
+<script src="random.js"></script>
 </body>
 </html>
