@@ -1147,7 +1147,10 @@ def test_the_worst_case_equilibrium_request_finishes_quickly():
     elapsed = time.perf_counter() - start
     assert status == 200
     assert answer["game"]["profiles"] <= 8192
-    assert elapsed < 5, f"worst-case equilibrium request took {elapsed:.2f}s"
+    # The profile cap above is the real guard; this is the blowup alarm. The budget is
+    # loose because shared CI runners are several times slower than a laptop, and a
+    # tight wall-clock bound there fails for the machine rather than for the code.
+    assert elapsed < 30, f"worst-case equilibrium request took {elapsed:.2f}s"
 
 
 def test_the_equilibrium_route_is_served_over_http(client):
