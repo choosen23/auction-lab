@@ -1064,3 +1064,97 @@ def test_the_worst_case_world_series_finishes_quickly():
     elapsed = time.perf_counter() - start
     assert status == 200
     assert elapsed < 5, f"worst-case world series took {elapsed:.2f}s"
+
+
+# ============================================================ phase 5: /equilibrium
+
+EQUILIBRIUM = {
+    "mechanism": "second_price",
+    "bidders": [
+        {"id": "A", "value": 100, "bid": 60},
+        {"id": "B", "value": 80, "bid": 50},
+    ],
+    "draws": 50,
+}
+
+
+def test_the_equilibrium_endpoint_returns_all_three_analyses():
+    status, body = serve.equilibrium_payload(EQUILIBRIUM)
+    assert status == 200
+    assert body["best_response"]["curves"]["A"]["points"]
+    assert body["game"]["nash"]["truthful_is_nash"] is True
+    assert body["revenue_equivalence"]["symmetric"]["mechanisms"]["first_price"]["agrees"]
+    json.dumps(body)     # the browser has to be able to parse whatever we send
+
+
+def test_the_equilibrium_endpoint_reuses_the_bidder_rules():
+    """One copy of "what is a legal offer": the new door is not the weaker one."""
+    status, body = serve.equilibrium_payload({**EQUILIBRIUM, "bidders": [
+        {"id": "A", "value": -1, "bid": 60},
+    ]})
+    assert status == 400
+    assert "non-negative" in body["error"]
+
+
+def test_a_package_mechanism_is_refused_with_its_own_reason():
+    """Not "wrong key" — a bundle bidder has no single number to search over."""
+    status, body = serve.equilibrium_payload({
+        "mechanism": "vcg_package",
+        "packages": [{"bidder": "A", "items": ["x"], "value": 5, "bid": 5}],
+    })
+    assert status == 400
+    assert "no single number to vary" in body["error"]
+
+
+@pytest.mark.parametrize("body,message", [
+    ({"steps": 1}, "grid steps must be between"),
+    ({"steps": 999}, "grid steps must be between"),
+    ({"steps": 4.5}, "grid steps must be a whole number"),
+    ({"steps": True}, "grid steps must be a whole number"),
+    ({"draws": 0}, "draws must be between"),
+    ({"draws": 10**9}, "draws must be between"),
+    ({"draws": "many"}, "draws must be a whole number"),
+    ({"seed": 1.5}, "seed must be a whole number"),
+])
+def test_out_of_range_search_knobs_are_400s(body, message):
+    status, answer = serve.equilibrium_payload({**EQUILIBRIUM, **body})
+    assert status == 400
+    assert message in answer["error"]
+
+
+def test_an_unknown_mechanism_param_is_still_refused():
+    status, body = serve.equilibrium_payload({**EQUILIBRIUM, "params": {"nope": 1}})
+    assert status == 400
+    assert "unknown parameter" in body["error"]
+
+
+def test_the_same_body_twice_gives_the_same_answer():
+    """Seeded end to end, so a learner comparing two runs is comparing the setups."""
+    assert serve.equilibrium_payload(EQUILIBRIUM) == serve.equilibrium_payload(EQUILIBRIUM)
+
+
+def test_the_worst_case_equilibrium_request_finishes_quickly():
+    """The search is capped before it starts rather than cut off by a timeout, so the
+    most expensive body this endpoint accepts is known in advance."""
+    body = {
+        "mechanism": "vcg_positions",     # the most expensive mechanism per run
+        "bidders": [{"id": chr(65 + i), "value": 100 - 7 * i, "bid": 50} for i in range(5)],
+        "steps": 33,
+        "draws": 5000,
+    }
+    start = time.perf_counter()
+    status, answer = serve.equilibrium_payload(body)
+    elapsed = time.perf_counter() - start
+    assert status == 200
+    assert answer["game"]["profiles"] <= 8192
+    assert elapsed < 5, f"worst-case equilibrium request took {elapsed:.2f}s"
+
+
+def test_the_equilibrium_route_is_served_over_http(client):
+    body = json.dumps(EQUILIBRIUM)
+    status, headers, raw = fetch(
+        client, "POST", "/equilibrium", body, {"Content-Length": str(len(body))}
+    )
+    assert status == 200
+    assert headers["Content-Type"] == "application/json"
+    assert as_json(raw)["mechanism"] == "second_price"

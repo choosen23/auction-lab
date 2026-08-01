@@ -1,11 +1,11 @@
-"""Stdlib HTTP server: static files from ``web/``, two schema routes, two run routes.
+"""Stdlib HTTP server: static files from ``web/``, three schema routes, three run routes.
 
 This module is transport and nothing else — routing, headers, path safety, byte caps.
 What a request *means* lives in :mod:`agt.api`, whose functions take JSON and return
 ``(status, body)`` with no socket in sight, so the tests can call them directly. The
 public names are re-exported here because ``agt.serve`` is the front door.
 
-ponytail: stdlib ``http.server``, no FastAPI — four endpoints do not earn a dependency,
+ponytail: stdlib ``http.server``, no FastAPI — five endpoints do not earn a dependency,
 and a dependency would also block the eventual Pyodide deploy. Ceiling: no async, no
 middleware, one thread per connection. Upgrade at ~10 endpoints or when async is needed.
 
@@ -22,21 +22,27 @@ from urllib.parse import unquote, urlsplit
 from agt.api import (
     DEFAULT_ROUNDS,
     MAX_BIDDERS,
+    equilibrium_payload,
     run_payload,
     run_series_payload,
     validate,
+    validate_equilibrium,
     validate_series,
 )
 from agt.mechanisms import registry_schema
+from agt.presets import preset_schema
 from agt.strategies import strategy_schema
 
 __all__ = [
     "DEFAULT_ROUNDS",
     "MAX_BIDDERS",
+    "equilibrium_payload",
+    "preset_schema",
     "run_payload",
     "run_series_payload",
     "serve",
     "validate",
+    "validate_equilibrium",
     "validate_series",
 ]
 
@@ -102,12 +108,20 @@ def content_type(path: Path) -> str:
 
 # The routing tables, so a new endpoint is a line rather than another branch. Both are
 # read-only lookups; anything not in them falls through to static files or a JSON 404.
-SCHEMAS = {"/mechanisms": registry_schema, "/strategies": strategy_schema}
-RUNNERS = {"/run": run_payload, "/run_series": run_series_payload}
+SCHEMAS = {
+    "/mechanisms": registry_schema,
+    "/strategies": strategy_schema,
+    "/presets": preset_schema,
+}
+RUNNERS = {
+    "/run": run_payload,
+    "/run_series": run_series_payload,
+    "/equilibrium": equilibrium_payload,
+}
 
 
 class Handler(BaseHTTPRequestHandler):
-    """Four endpoints and the static tree. Anything else is a JSON 404: the client is fetch()."""
+    """Six endpoints and the static tree. Anything else is a JSON 404: the client is fetch()."""
 
     server_version = "agt"
     sys_version = ""

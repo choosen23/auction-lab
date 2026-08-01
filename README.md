@@ -1,6 +1,9 @@
-# agt-training
+# auction-lab
 
 Watch auction mechanisms run, one algorithmic step at a time.
+
+[![tests](https://github.com/choosen23/auction-lab/actions/workflows/tests.yml/badge.svg)](https://github.com/choosen23/auction-lab/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Set up bidders and their private values, pick a mechanism, and step through it: bids arrive, get
 sorted, a winner is chosen, a pricing rule fires, payments settle. Every step shows the rule that
@@ -12,6 +15,13 @@ python3 -m agt.serve
 
 Then open <http://127.0.0.1:8000>. No dependencies, no build step — Python 3.11+ stdlib and vanilla
 JS. `--port` changes the port.
+
+The page opens on a worked example. Along the top is a row of them, each a question rather than a
+setting — *Honesty is safe*, *Why everyone shades*, *Losers pay too*, *The budget runs out* — and
+one click fills the whole form and runs it. Every example lives in `agt/presets.py` and arrives over
+`GET /presets`, so the browser still knows no mechanism by name; `tests/test_presets.py` posts each
+one to the endpoint it will actually reach, because a chip that fails when clicked is worse than no
+chip at all.
 
 ## Mechanisms (phase 1)
 
@@ -155,6 +165,90 @@ reward you have not normalized.
 Everything is seeded: the same seed replays the same day exactly, and no strategy may touch the
 global `random` module — a test asserts `random.getstate()` is untouched across a whole series.
 
+## Equilibrium (phase 5)
+
+Everything above answers *given these bids, what happens?* **Analyse equilibrium** asks the question
+underneath: of all the profiles that could have been played, which are stable, and what does one
+bidder's payoff look like across its whole range rather than at the point it bid.
+
+Every payoff is **measured, not derived** — a real `run()` of the real mechanism, the same door
+`best_response` uses. So the answers come out per-mechanism without a line of per-mechanism code.
+With A valuing the item at 100 and B at 80, on a grid of ten bids from 0 to 100:
+
+| | Pure Nash | Truthful is one? | Truthful is *dominant*? | A's best reply to B's 50 |
+|---|---|---|---|---|
+| `second_price` | 35 | yes | **yes** | anything from 50 to 100 — a flat plateau |
+| `english` | 35 | yes | **yes** | plateau, identically |
+| `first_price` | 4 | no | no | 50, a single peak |
+| `dutch` | 4 | no | no | 50, identically |
+| `all_pay` | **0** | — | no | 50, and every losing bid goes negative |
+| `gsp` | 54 | no | no | plateau — every bid buys *some* slot |
+
+**Second-price has 35 equilibria and only one of them is the lesson.** Truthful bidding is there.
+So is `A: 62.5, B: 100`, where the bidder who values the item at 80 takes it from the one who
+values it at 100 — and neither can improve alone, because A would have to bid 100 and pay 100 to
+win it back. Across the 35, revenue runs from 0 to 100 and 8 of them hand the item to the wrong
+bidder. That is what Nash promises: no unilateral regret, and nothing else. **Dominance** is the
+stronger claim, asked and answered separately — is bidding your value a best reply to *every* rival
+profile, not merely to one — and it is what "second-price is truthful" actually means.
+
+Untruthfulness is never reported as an absence. It is pinned to a deviation:
+
+> Bidding its value is not dominant for A. Against rivals at B 100, honesty at 100 earns 0 while
+> bidding 0 earns 50 — 50 more. One profile is enough: dominance is a claim about all of them.
+
+A test asserts the grid's dominance verdict equals each mechanism's declared `truthful_dominant`, so
+a mechanism that lies about itself fails the suite rather than quietly teaching the wrong lesson.
+
+The verdict has three states, not two. Start a Dutch clock below a bidder's value and that bidder is
+forbidden from ever naming it, so every profile in which it bids honestly is refused and *nothing
+beat honesty* becomes vacuously true. That reports as **could not be tested**, with the count of
+profiles each verdict actually rests on — the one way an exhaustive search like this can assert
+something false is by answering a question it was never able to ask.
+
+### Revenue equivalence
+
+Three payment rules that look nothing alike, each played at its known symmetric equilibrium, over
+2000 seeded draws with three bidders drawing uniformly from [0, 100]:
+
+| | Mean revenue | Paired difference vs second-price | |
+|---|---|---|---|
+| `second_price` | 50.5 | the baseline | |
+| `first_price` | 50.1 | −0.44 ± 0.41 | agrees |
+| `all_pay` | 50.7 | +0.20 ± 0.43 | agrees |
+| `english` / `dutch` | 50.5 / 50.1 | 0.00 ± 0.00 | identical, draw for draw |
+
+All of them land on the closed form `H(n−1)/(n+1) = 50`, the expected second-highest value. Every
+mechanism is scored on the *same* draws, so the verdict is a paired difference within three standard
+errors rather than two means eyeballed side by side — on 400 draws a gap of 0.24 is not evidence of
+anything, and the test says so with a number.
+
+Then take one hypothesis away. Let the bidders draw from [0, 100], [0, 60] and [0, 30] while each
+still plays the symmetric rule:
+
+| | Mean revenue | Paired difference vs second-price | |
+|---|---|---|---|
+| `second_price` | 27.7 | the baseline | |
+| `first_price` | 37.5 | **+9.81 ± 0.35** | differs |
+| `all_pay` | 20.7 | **−6.97 ± 0.39** | differs |
+
+The theorem did not fail — its hypothesis did, and nothing that broke is a payment rule. Second-price
+still collects the second-highest value, because truthful bidding stays dominant however lopsided the
+market is. That is the practical argument for it, and it is the one the numbers make rather than the
+prose.
+
+The search is bounded before it starts rather than cut off by a timeout: the profile space is
+`grid ** bidders`, capped at 8192 auctions. A default request is about 0.3s; the largest body the
+endpoint will accept — five bidders, a 33-step grid, 5000 draws — measures 3.05s, which is the
+number to know before widening any of the three caps. A grid too fine to search is coarsened and
+says so; a table too large to search at all — six bidders or more — still returns the reply curves
+and the revenue check, with a sentence naming what was skipped. A missing equilibrium table that
+said nothing would read as "there are none".
+
+Mixed-strategy equilibria are out of scope. `all_pay` genuinely has no pure equilibrium, and the
+report says "none on this grid, its equilibrium is in mixed strategies" rather than implying there
+is none at all.
+
 ## How it works
 
 The Python engine runs an auction and emits a **trace**: an ordered list of steps, each carrying a
@@ -174,6 +268,10 @@ from the strategies plus history, then calls that same unchanged `run()`. **A ro
 trace**, so selecting a round on the timeline feeds the ordinary step view — phase 2 added no new
 rendering path.
 
+`POST /equilibrium` is the one endpoint that returns no trace. It runs the same `run()` thousands of
+times over a grid of bids and reports what it found, so it stays read-only analysis of a mechanism
+the engine already has — no new mechanism, no new strategy, no state.
+
 | Path | Responsibility |
 |---|---|
 | `agt/trace.py` | `Bidder`, `Step`, `Trace`, and the `outcome()` math |
@@ -188,6 +286,9 @@ rendering path.
 | `agt/world.py` | The day: value draws, budgets, seeded RNG |
 | `agt/pacing.py`, `agt/steering.py` | The four budget pacers and their shared feedback law |
 | `agt/bandits.py`, `agt/regret.py` | The two learners and regret against the hindsight arm |
+| `agt/equilibrium.py` | Bid grid, payoff table, reply curves, pure Nash, grid dominance |
+| `agt/revenue.py` | Symmetric BNE bid functions and the paired revenue-equivalence check |
+| `agt/presets.py` | The worked examples, audited against the live registries at import |
 | `agt/api.py` | Request validation and the JSON-in/JSON-out endpoint bodies |
 | `agt/serve.py` | stdlib HTTP server: routing, static files, byte caps |
 | `web/app.js` | Step renderer (phase 1) |
@@ -195,12 +296,16 @@ rendering path.
 | `web/positions.js` | Slot ladder (phase 3a) |
 | `web/packages.js` | Package bid table, bundle allocation, welfare gap (phase 3b) |
 | `web/campaign.js` | Spend, win-rate, steering and regret charts (phase 4) |
+| `web/equilibrium.js` | Reply curve, equilibrium table, revenue comparison (phase 5) |
+| `web/start.js` | The front door: mode switch and the worked-example chips (phase 6) |
 
 Each phase added its view as an **additive seam** rather than by editing the renderer: `app.js`
 gained a handful of `if (window.someExt)` lines and nothing else. Which view appears is decided by
 the *shape* of the trace — numeric `allocation` values mean slots, lists of items mean bundles,
 neither means a single winner — so the rule that no JavaScript branches on a mechanism name still
-holds at three views deep.
+holds at four views deep. Phase 5 is where it was nearly lost: the revenue table needs to know which
+row is the baseline, and *every* clock auction sits at a difference of exactly zero, so the row is
+marked `baseline` by the server rather than recognised by name in the browser.
 
 ## Adding a mechanism
 
@@ -255,6 +360,51 @@ Sitting a round out is `BidDecision(abstain=True)`, **not** a bid of 0: a zero b
 a zero reserve and can win at a price of zero, inventing an impression that never happened. Publish
 whatever the strategy steers in `BidDecision.control` and it gets a chart for free.
 
+## Deploying
+
+`agt.serve` binds `127.0.0.1` and always will. That is not a limitation to work around — it is the
+correct thing to do on a server, because the process has no authentication, no TLS and no rate
+limiting, and it should never be the thing facing the internet. Put a reverse proxy in front of it
+and let the proxy own the certificate:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name your-domain;
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+    }
+}
+```
+
+Run it under whatever supervisor the box already has — a systemd unit calling
+`python3 -m agt.serve --port 8000` needs no virtualenv and no packages, because there are none.
+
+### Analytics
+
+One [GoatCounter](https://www.goatcounter.com) tag in `web/index.html`. No cookies, so no consent
+banner, and nothing to configure at deploy time.
+
+Development is silent without anyone having to remember that it should be: GoatCounter's own
+`count.js` declines to count `localhost`, `127.*`, RFC1918 ranges and `file://` unless `allow_local`
+is set, so `python3 -m agt.serve` on your laptop reports nothing.
+
+Beyond page views, two interactions are counted as events:
+
+| Event | Question it answers |
+|---|---|
+| `preset/<name>` | Which lesson people actually pick |
+| `mode/<mode>` | Whether anyone leaves the mode the page opens in |
+
+Both are things the HTTP log cannot tell you, because every worked example posts to the same three
+endpoints. The preset event is bound to the **chip's click**, not to `runPreset` — the page runs the
+first example on load, and counting that would inflate whichever example happens to be first by one
+per visit. `web/start.test.mjs` pins that distinction.
+
+If you fork this, change the `data-goatcounter` attribute or delete the tag. Otherwise your traffic
+is reported to the original author's account.
+
 ## Tests
 
 ```
@@ -275,12 +425,39 @@ profitable deviations**, not by leaving them off a list. A mechanism that was si
 would be wrong, and only an asserted deviation catches that. The exhaustive solver is also
 cross-checked against naive subset enumeration over hundreds of random instances.
 
+Phase 5 turns that idea on the registry itself: a parametrized test searches every mechanism's own
+payoff table and asserts the measured dominance verdict equals the `truthful_dominant` flag the
+mechanism declares. It also pins the facts a learner is actually there for — truthful bidding is a
+second-price equilibrium *and not the only one*, `all_pay` has no pure equilibrium at all, and
+revenue equivalence holds under its hypotheses and breaks without them.
+
+Phase 6 makes the front page testable. `agt/presets.py` audits itself against the live registries at
+import, so a renamed mechanism or a dropped strategy fails collection; `tests/test_presets.py` then
+posts every preset to the endpoint its chip presses, because names resolving is not the same promise
+as the run succeeding. The two browser checks need no framework and no browser:
+
+```
+node web/random.test.mjs      # a random setup is one a person could have typed
+node web/start.test.mjs       # a preset leaves nothing of the previous one behind
+```
+
+`start.test.mjs` is aimed at one failure mode specifically: the setup form is written whole, so the
+way it goes wrong is a *leftover* — last preset's budget still in the box, a world left open for a
+mode that never reads it, a package preset filling the scalar table. Each of those still runs, and
+answers a different question than the chip promised.
+
 ## Roadmap
 
-Phases 1–4 are done: single-item mechanisms, bidder strategies over repeated rounds, position and
-combinatorial auctions, and budget pacing with learning bidders. Next: equilibrium analysis — best
-response plots, Nash computation for small games, and a revenue-equivalence check. See
-`docs/superpowers/specs/`.
+Phases 1–5 are done: single-item mechanisms, bidder strategies over repeated rounds, position and
+combinatorial auctions, budget pacing with learning bidders, and equilibrium analysis. Plans for
+each phase are in `docs/superpowers/plans/`, the architecture in `docs/superpowers/specs/`. Phase 6
+added no mechanism and no maths — worked examples and one run button at a time, so the five phases
+above are reachable without already knowing which of them you wanted.
+
+Nothing is queued. The obvious next steps, in rough order of how much they would teach per line:
+mixed-strategy equilibria for the games that have no pure one (`all_pay` is the standing example),
+numerically solved Bayes-Nash bid functions so the revenue check stops relying on closed forms that
+only exist for uniform values, and asymmetric or correlated value distributions in the world model.
 
 ## Prior art
 

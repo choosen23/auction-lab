@@ -54,7 +54,11 @@
 
   --font: system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* A serif masthead over a sans body: the one typographic move that reads as
+     considered without touching a single measurement below it. */
+  --display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
   --radius: 10px;
+  --shadow: 0 1px 2px rgba(11, 11, 11, 0.04), 0 8px 24px -12px rgba(11, 11, 11, 0.10);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -91,6 +95,11 @@
 
     --good:     #0ca30c;
     --critical: #e07070;
+
+    /* On a dark plane a drop shadow is invisible; the lift has to come from the
+       card being lighter than the page, which it already is. Keep a hairline
+       ambient only. */
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   }
 }
 
@@ -109,11 +118,18 @@ body {
   line-height: 1.5;
 }
 
-h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+h1 {
+  font-family: var(--display);
+  font-size: 34px;
+  font-weight: 500;
+  margin: 0 0 6px;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+}
 h2 { font-size: 14px; margin: 0 0 10px; letter-spacing: 0.02em; text-transform: uppercase; color: var(--ink-2); }
 h3 { font-size: 13px; margin: 18px 0 8px; color: var(--ink-2); }
 
-.app-head { margin-bottom: 18px; }
+.app-head { margin-bottom: 26px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
 .app-head .sub { margin: 0; max-width: 68ch; color: var(--ink-2); }
 
 .visually-hidden {
@@ -144,7 +160,8 @@ h3 { font-size: 13px; margin: 18px 0 8px; color: var(--ink-2); }
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px 18px 18px;
+  box-shadow: var(--shadow);
+  padding: 18px 20px 20px;
   min-width: 0;
 }
 
@@ -200,9 +217,6 @@ button.ghost { border-style: dashed; color: var(--ink-2); width: 100%; margin-to
 
 .params { display: grid; gap: 10px; margin-top: 14px; }
 .params .param-desc { margin: 2px 0 0; font-size: 12px; color: var(--ink-muted); }
-
-.run-row { margin-top: 16px; }
-.run-row button { width: 100%; padding: 9px 12px; }
 
 .error {
   margin: 12px 0 0;
@@ -274,7 +288,17 @@ table { border-collapse: collapse; width: 100%; }
 
 .step-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .step-count { margin: 0; font-size: 12px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
-.step-label { font-size: 20px; text-transform: none; letter-spacing: -0.01em; color: var(--ink); margin: 0; }
+/* The one heading that changes as you step: same serif as the masthead, so the
+   page has two typographic anchors rather than one lonely one. */
+.step-label {
+  font-family: var(--display);
+  font-size: 24px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 2px 0 0;
+}
 
 .chip {
   display: inline-block;
@@ -397,6 +421,25 @@ table { border-collapse: collapse; width: 100%; }
 
 .note { margin: 10px 0 0; color: var(--ink-2); font-size: 13px; }
 
+/* ------------------------------------------------------------- footer ---- */
+
+/* Matched to .app-head's rule so the page is bracketed rather than trailing off.
+   body already carries 64px of bottom padding, which is the breathing room. */
+.app-foot {
+  margin-top: 32px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.app-foot .foot-line { margin: 0; max-width: 68ch; }
+.app-foot .foot-meta { margin-top: 5px; color: var(--ink-muted); font-size: 12px; }
+
+/* Links are underlined everywhere rather than colour-only: at --ink-2 on --plane a
+   hue shift alone would be the sole cue, which fails for anyone who cannot see it. */
+.app-foot a { color: var(--series-bid); text-decoration: underline; text-underline-offset: 2px; }
+.app-foot a:hover { color: var(--ink); }
+
 /* ------------------------------------------------------------ tooltip ---- */
 
 .tooltip {
@@ -447,9 +490,9 @@ table { border-collapse: collapse; width: 100%; }
 .strategy-note { margin: 0; font-size: 12px; line-height: 1.4; color: var(--ink-muted); }
 .strategy-note .k { color: var(--ink-2); font-weight: 600; }
 
-.series-run, .rand-row { display: flex; align-items: flex-end; gap: 10px; margin-top: 10px; }
-.series-run .rounds-field, .rand-row .rounds-field { width: 82px; flex: none; }
-.series-run button, .rand-row button { flex: 1; padding: 9px 12px; }
+.rand-row { display: flex; align-items: flex-end; gap: 10px; margin-top: 10px; }
+.rand-row .rounds-field { width: 82px; flex: none; }
+.rand-row button { flex: 1; padding: 9px 12px; }
 
 /* ---------------------------------------------------- round timeline ------ */
 
@@ -639,7 +682,7 @@ table { border-collapse: collapse; width: 100%; }
    bidder's own limit.
    ========================================================================= */
 
-.world-box { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.world-box { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
 .world-box summary { cursor: pointer; font-size: 12px; color: var(--ink-2); }
 .world-box > .caption { margin: 8px 0; }
 .world-fields { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -651,7 +694,7 @@ table { border-collapse: collapse; width: 100%; }
 .chart-figure .caption { margin-top: 6px; }
 
 .line-chart { width: 100%; height: auto; display: block; }
-.line-chart .grid { stroke: var(--line); stroke-width: 1; }
+.line-chart .grid { stroke: var(--grid); stroke-width: 1; }
 .line-chart .tick, .line-chart .axis-title { font-size: 10px; fill: var(--ink-muted); }
 .line-chart .end-label { font-size: 10px; }
 .line-chart .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
@@ -659,3 +702,113 @@ table { border-collapse: collapse; width: 100%; }
 .line-chart .line.is-dashed { stroke-dasharray: 4 4; stroke-width: 1.5; opacity: 0.75; }
 /* 2px surface ring so overlapping dots stay countable. */
 .line-chart .dot { stroke: var(--surface); stroke-width: 2; }
+
+/* =========================================================================
+   Phase 6 — the front door: worked examples, and one run button at a time.
+
+   No new colour: the active chip and the active mode both use the same --wash
+   band and --series-bid border the stage list already uses for "this is the one
+   you are looking at", so a third selected-thing on the page reads as the same
+   idea rather than a new one.
+   ========================================================================= */
+
+.starters {
+  margin-bottom: 18px;
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.starters-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+.starters-head h2 { margin: 0; }
+/* The sentence for the example currently loaded. It moves as chips are pressed,
+   so it is the one line that says what the charts below are showing. */
+.starters-now { margin: 0; flex: 1 1 32ch; min-width: 0; font-size: 13px; color: var(--ink-2); }
+
+.starter-chips { margin: 12px 0 0; gap: 7px; }
+
+.chip.starter {
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--ink-2);
+  background: var(--surface);
+  border-color: var(--axis);
+  /* A chip is a label, not a paragraph: it may wrap, but the whole sentence
+     lives in the tooltip and the accessible name rather than on the chip. */
+  max-width: 34ch;
+  text-align: left;
+}
+.chip.starter:hover { background: var(--sunken); color: var(--ink); }
+.chip.starter[aria-pressed="true"] {
+  color: var(--ink);
+  font-weight: 600;
+  background: var(--wash);
+  border-color: color-mix(in srgb, var(--series-bid) 45%, transparent);
+}
+
+/* ---------------------------------------------------------- mode switch --- */
+
+.mode-switch {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+  margin-top: 18px;
+  padding: 2px;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.mode-switch button {
+  border: 1px solid transparent;
+  background: none;
+  padding: 5px 6px;
+  font-size: 12px;
+  color: var(--ink-2);
+  border-radius: 6px;
+}
+.mode-switch button:hover:not([aria-pressed="true"]) { color: var(--ink); background: none; }
+.mode-switch button[aria-pressed="true"] {
+  color: var(--ink);
+  font-weight: 600;
+  background: var(--surface);
+  border-color: color-mix(in srgb, var(--series-bid) 35%, transparent);
+}
+
+.mode-desc { margin: 8px 0 0; font-size: 12px; color: var(--ink-muted); }
+
+.run-bar { display: flex; align-items: flex-end; gap: 10px; margin-top: 12px; }
+.run-bar .rounds-field { width: 82px; flex: none; }
+.run-bar button { flex: 1; padding: 9px 12px; }
+
+/* ------------------------------------------------ phase 5: equilibrium ---- */
+
+/* One line, so one hue — the reply curve is a single series and a second colour
+   would imply a second identity. Slot 1 for the same reason the bid-path chart
+   starts there. */
+#eq-curve .line-chart .line { stroke: var(--cat-1); }
+#eq-curve .line-chart .dot { fill: var(--cat-1); }
+/* The argmax, ringed rather than recoloured: which bid is best is also stated in
+   the sentence under the chart, so the mark is a shortcut and never the only
+   place the answer appears. */
+#eq-curve .line-chart .dot.is-best { fill: var(--surface); stroke: var(--cat-1); stroke-width: 3; }
+/* Zero earns the axis weight: under all-pay rules the curve crosses it, and
+   "this bid loses money" is the whole reading. */
+.line-chart .grid.is-zero { stroke: var(--axis); }
+.line-chart .rule-line { stroke: var(--rule); stroke-width: 1.5; stroke-dasharray: 3 3; }
+
+.chip.is-on { background: var(--wash); border-color: var(--series-bid); color: var(--ink); }
+
+.verdict.is-good { border-left: 3px solid var(--good); }
+.verdict.is-bad  { border-left: 3px solid var(--critical); }
+.verdict { flex-direction: column; gap: 4px; }
+.verdict-flag { font-weight: 600; }
+.verdict.is-good .verdict-flag { color: var(--good); }
+.verdict.is-bad  .verdict-flag { color: var(--critical); }
+
+.data-table td.is-good { color: var(--good); }
+.data-table td.is-bad  { color: var(--critical); }
+
+#equilibrium-card h3 { margin: 22px 0 4px; font-size: 15px; }
+#equilibrium-card h3:first-child { margin-top: 0; }

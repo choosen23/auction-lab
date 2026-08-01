@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+title: "auction-lab: step-through visualizations of auction mechanisms"
+message: "If you use this software in teaching or research, please cite it."
+type: software
+authors:
+  - family-names: Filippou
+    given-names: Michail
+    # Add your ORCID and affiliation here — GitHub renders both in the citation box.
+    # orcid: "https://orcid.org/XXXX-XXXX-XXXX-XXXX"
+repository-code: "https://github.com/choosen23/auction-lab"
+abstract: >-
+  auction-lab renders auction mechanisms as inspectable sequences of
+  algorithmic steps. It covers single-item mechanisms (first-price,
+  second-price, all-pay, English, Dutch), position auctions (GSP, VCG),
+  combinatorial auctions with greedy and optimal winner determination,
+  repeated-round bidder strategies with budget pacing and learning agents,
+  and pure-strategy equilibrium analysis including revenue equivalence.
+  The engine is pure Python standard library; the interface is dependency-free
+  JavaScript.
+keywords:
+  - auction theory
+  - mechanism design
+  - algorithmic game theory
+  - Vickrey auction
+  - VCG
+  - generalized second-price auction
+  - combinatorial auction
+  - teaching
+license: MIT
+version: "1.0.0"
+date-released: "2026-08-01"

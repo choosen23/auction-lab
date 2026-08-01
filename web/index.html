@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Auction walkthrough</title>
 <link rel="stylesheet" href="style.css">
+
+<!-- GoatCounter. No cookies, so no consent banner, and its own script declines to
+     count localhost, private ranges and file:// — a local `python3 -m agt.serve`
+     is silent without anything here having to know it is local.
+
+     Explicit https rather than the protocol-relative //gc.zgo.at from the snippet:
+     opening this file directly would otherwise resolve to file://gc.zgo.at. -->
+<script data-goatcounter="https://choosen23.goatcounter.com/count"
+        async src="https://gc.zgo.at/count.js"></script>
 </head>
 <body>
 
@@ -14,6 +23,16 @@
   right is drawn from the trace the engine emitted &mdash; nothing here knows what the
   mechanisms are.</p>
 </header>
+
+<!-- The front door. web/start.js fills this from GET /presets and opens the page on
+     the first one, so nobody arrives at an empty form wondering what to press. -->
+<section class="starters" id="starters" aria-labelledby="starters-h" hidden>
+  <div class="starters-head">
+    <h2 id="starters-h">Start with a question</h2>
+    <p class="starters-now" id="starters-now"></p>
+  </div>
+  <div class="chips starter-chips" id="starter-chips" role="group" aria-label="Worked examples"></div>
+</section>
 
 <div class="layout">
 
@@ -88,21 +107,31 @@
            fills this from GET /strategies. -->
       <div class="strategy-notes" id="strategy-notes"></div>
 
-      <div class="run-row">
-        <button type="button" class="primary" id="run">Run auction</button>
+      <!-- One question at a time. The three run buttons were three stacked calls to
+           action with no hierarchy between them; they are the same three buttons,
+           but only the one the chosen mode uses is ever on screen. Each keeps its
+           own id, so every listener in series.js and equilibrium.js is untouched. -->
+      <div class="mode-switch" id="mode-switch" role="group" aria-label="What to run">
+        <button type="button" data-mode="single" aria-pressed="true">Once</button>
+        <button type="button" data-mode="series" aria-pressed="false">Over rounds</button>
+        <button type="button" data-mode="equilibrium" aria-pressed="false">Equilibrium</button>
       </div>
+      <p class="mode-desc" id="mode-desc"></p>
 
-      <div class="series-run">
-        <div class="field rounds-field">
+      <div class="run-bar">
+        <div class="field rounds-field" id="rounds-field" hidden>
           <label for="rounds">Rounds</label>
           <input type="number" id="rounds" min="1" max="50" step="1" value="8">
         </div>
-        <button type="button" class="primary" id="run-series">Run series</button>
+        <button type="button" class="primary" id="run">Run auction</button>
+        <button type="button" class="primary" id="run-series" hidden>Run series</button>
+        <button type="button" class="primary" id="run-equilibrium" hidden>Analyse equilibrium</button>
       </div>
 
       <!-- Phase 4. Off by default: with no world, a series is exactly the phase 2
-           series, values fixed and nobody on a budget. -->
-      <details class="world-box" id="world-box">
+           series, values fixed and nobody on a budget. Series-only, because a world
+           is what draws each round's value and a single run has one round. -->
+      <details class="world-box" id="world-box" hidden>
         <summary>Run it as a day with budgets</summary>
         <p class="caption">Each round becomes one impression with a freshly drawn value, and
           bidders spend from a budget that runs out. This is what pacing is for.</p>
@@ -254,6 +283,24 @@
       <p class="caption" id="unsold-note"></p>
     </section>
 
+    <!-- Phase 5. web/equilibrium.js unhides this after an analysis; it is not part
+         of a run, so stepping through a trace never touches it. -->
+    <section class="card" id="equilibrium-card" aria-labelledby="equilibrium-h" hidden>
+      <h2 id="equilibrium-h">Equilibrium</h2>
+      <p class="caption">Not what happens at these bids — what happens at every other bid
+        too. A reply curve is one bidder's slice through the game; an equilibrium is where
+        every slice agrees at once.</p>
+
+      <div class="chips" id="eq-bidders"></div>
+      <div id="eq-curve"></div>
+
+      <h3>Stable profiles</h3>
+      <div id="eq-nash"></div>
+
+      <div id="eq-dominance"></div>
+      <div id="eq-revenue"></div>
+    </section>
+
   </main>
 </div>
 
@@ -261,11 +308,27 @@
      view already carry, so it stays out of the accessibility tree. -->
 <div class="tooltip" id="tooltip" aria-hidden="true" hidden></div>
 
+<footer class="app-foot">
+  <p class="foot-line">
+    Built by <strong>Michail&nbsp;Filippou</strong>. Found something wrong, or want a
+    mechanism that isn&rsquo;t here?
+    <!-- Issues rather than an address on the page: the answer to "why does GSP do
+         that" is worth other people finding, and a mailto is worth only spam. -->
+    <a href="https://github.com/choosen23/auction-lab/issues">Open an issue</a>.
+  </p>
+  <p class="foot-line foot-meta">
+    <a href="https://github.com/choosen23/auction-lab">Source on GitHub</a>
+    &middot; Python&nbsp;3.11+ stdlib and vanilla JS &mdash; no dependencies, no build step
+  </p>
+</footer>
+
 <script src="app.js"></script>
 <script src="series.js"></script>
 <script src="positions.js"></script>
 <script src="packages.js"></script>
 <script src="campaign.js"></script>
+<script src="equilibrium.js"></script>
 <script src="random.js"></script>
+<script src="start.js"></script>
 </body>
 </html>

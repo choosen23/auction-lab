@@ -26,8 +26,16 @@ import math
 import traceback
 from typing import Any
 
+from agt.equilibrium import (
+    DEFAULT_STEPS,
+    MAX_STEPS,
+    MIN_STEPS,
+    analyse,
+    refuse_grid_search,
+)
 from agt.mechanisms import REGISTRY, Mechanism, run
 from agt.packages import MAX_BIDS, MAX_ITEMS, PackageBid
+from agt.revenue import DEFAULT_DRAWS, MAX_DRAWS, MIN_DRAWS
 from agt.series import MAX_ROUNDS, refuse_repeated_rounds, run_series
 from agt.strategies import STRATEGIES
 from agt.trace import Bidder
@@ -74,6 +82,25 @@ def validate_series(payload: Any) -> dict[str, Any]:
     valid["rounds"] = _rounds(payload.get("rounds"))
     valid["strategies"] = _strategies(payload.get("strategies"), valid["bidders"])
     valid["world"] = _world(payload.get("world"), valid["rounds"], valid["bidders"])
+    return valid
+
+
+def validate_equilibrium(payload: Any) -> dict[str, Any]:
+    """Check an untrusted ``/equilibrium`` body: :func:`validate`, plus the search knobs.
+
+    The input-kind check comes first for the same reason it does in
+    :func:`validate_series`: a package mechanism should be told that its bidders have no
+    single number to search over, not that its ``bidders`` list is the wrong key.
+
+    There are no strategies here and no world. Equilibrium analysis is a question about the
+    mechanism itself — which profiles are stable, whatever anybody's strategy happens to be
+    — so a body carrying either would be a body whose author expected a different endpoint.
+    """
+    refuse_grid_search(_mechanism(payload).name)
+    valid = validate(payload)
+    valid["steps"] = _whole("grid steps", payload.get("steps"), MIN_STEPS, MAX_STEPS, DEFAULT_STEPS)
+    valid["draws"] = _whole("draws", payload.get("draws"), MIN_DRAWS, MAX_DRAWS, DEFAULT_DRAWS)
+    valid["seed"] = _seed(payload.get("seed"))
     return valid
 
 
@@ -205,19 +232,29 @@ def _params(where: str, given: Any, declared: dict[str, Any]) -> dict[str, Any]:
     return dict(given)
 
 
-def _rounds(value: Any) -> int:
-    """A whole number of rounds within the engine's cap. ``None`` means 'use the default'."""
+def _whole(where: str, value: Any, low: int, high: int, default: int) -> int:
+    """A whole number in ``[low, high]``. ``None`` means 'use the default'.
+
+    One copy, because rounds, grid steps and Monte-Carlo draws are the same rule with
+    different numbers, and three drifting copies of "what counts as a whole number" is how
+    one of them ends up accepting ``True``.
+    """
     if value is None:
-        value = DEFAULT_ROUNDS
+        value = default
     # bool is an int subclass, and ``True`` as a round count would silently become 1.
     # An integral float is fine: a JSON round-trip through a form turns 3 into 3.0.
     whole = isinstance(value, int) and not isinstance(value, bool)
     whole = whole or (isinstance(value, float) and value.is_integer())
     if not whole:
-        raise ValueError(f"rounds must be a whole number, got {value!r:.60}")
-    if not 1 <= value <= MAX_ROUNDS:
-        raise ValueError(f"rounds must be between 1 and {MAX_ROUNDS}, got {value!r:.60}")
+        raise ValueError(f"{where} must be a whole number, got {value!r:.60}")
+    if not low <= value <= high:
+        raise ValueError(f"{where} must be between {low} and {high}, got {value!r:.60}")
     return int(value)
+
+
+def _rounds(value: Any) -> int:
+    """A whole number of rounds within the engine's cap. ``None`` means 'use the default'."""
+    return _whole("rounds", value, 1, MAX_ROUNDS, DEFAULT_ROUNDS)
 
 
 def _strategies(entries: Any, bidders: list[Bidder]) -> dict[str, dict[str, Any]]:
@@ -427,6 +464,39 @@ def run_series_payload(payload: Any) -> tuple[int, dict[str, Any]]:
             "traceback": traceback.format_exc(),
         }
     return 200, series.to_dict()
+
+
+def equilibrium_payload(payload: Any) -> tuple[int, dict[str, Any]]:
+    """Validate and analyse one setup. Returns ``(status, body)`` and never raises.
+
+    Bounded before it starts, like the other two: the profile search is capped in
+    :mod:`agt.equilibrium` and the Monte-Carlo draws are capped here, so the most expensive
+    body this endpoint accepts is known in advance rather than cut off by a timeout. A
+    setup too large to search still gets a 200 — the reply curves and the revenue check do
+    not depend on the search, and returning nothing because one third was unaffordable
+    would be worse than saying which third.
+    """
+    try:
+        valid = validate_equilibrium(payload)
+    except ValueError as exc:
+        return 400, {"error": str(exc)}
+    try:
+        report = analyse(
+            valid["mechanism"],
+            valid["bidders"],
+            valid["params"],
+            steps=valid["steps"],
+            draws=valid["draws"],
+            seed=valid["seed"],
+        )
+    except ValueError as exc:
+        return 400, {"error": str(exc)}
+    except Exception as exc:  # a bug in a mechanism, not in the request
+        return 500, {
+            "error": f"{type(exc).__name__}: {exc}",
+            "traceback": traceback.format_exc(),
+        }
+    return 200, report
 
 
 def _partial_trace(valid: dict[str, Any], exc: BaseException) -> dict[str, Any]:

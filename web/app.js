@@ -42,6 +42,25 @@ function h(tag, className, text) {
   return node;
 }
 
+/** Count one interaction, if the page was served with analytics configured.
+ *
+ *  A no-op otherwise, which is every local run: the counter script is injected by
+ *  agt/serve.py from an environment variable, so window.goatcounter simply does not
+ *  exist during development. Nothing here waits on it or reports its absence.
+ *
+ *  Called explicitly rather than via the vendor's data-goatcounter-click binding,
+ *  because that binding is applied once on load and everything worth counting here
+ *  is rendered after a fetch resolves. */
+function track(path, title) {
+  const gc = window.goatcounter;
+  if (!gc || typeof gc.count !== 'function') return;
+  try {
+    gc.count({ path, title, event: true });
+  } catch {
+    // Analytics must never be able to break a run.
+  }
+}
+
 function s(tag, attrs, text) {
   const node = document.createElementNS(SVG_NS, tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -861,6 +880,15 @@ async function boot() {
 
   // Phase 4 seam: the budget column tracks whatever bidders exist.
   if (window.campaignExt && window.campaignExt.boot) window.campaignExt.boot();
+
+  // Phase 5 seam: wire the analyse button. Nothing is fetched until it is pressed —
+  // an equilibrium search is not what somebody opening the page asked for.
+  if (window.equilibriumExt && window.equilibriumExt.boot) window.equilibriumExt.boot();
+
+  // The front-door seam: web/start.js wires the mode switch and opens the page on a
+  // worked example. It reports whether it ran one, because two runs racing each other
+  // on load would render whichever finished last.
+  if (window.startExt && window.startExt.boot && (await window.startExt.boot())) return;
 
   await runAuction();   // the default setup is meant to be useful the moment the page loads
 }
