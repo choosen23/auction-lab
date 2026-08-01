@@ -9,6 +9,8 @@ Set up bidders and their private values, pick a mechanism, and step through it: 
 sorted, a winner is chosen, a pricing rule fires, payments settle. Every step shows the rule that
 fired and the numbers it produced.
 
+![Stepping through a second-price auction: collect bids, sort, allocate, price rule, payments](docs/img/walkthrough.gif)
+
 ```
 python3 -m agt.serve
 ```
@@ -55,6 +57,8 @@ and only one of them is truthful:
 | `vcg_positions` | slot 0, pays 5, utility **5** ← honesty wins | slot 1, pays 1, utility 4 |
 
 Sponsored search runs GSP anyway. Set `slots=1` and both collapse to second-price.
+
+![The slot ladder: one rung per slot, showing CTR, price per click, what each winner pays and what it keeps](docs/img/slots.png)
 
 **Combinatorial auctions** sell bundles. Bidders submit XOR package bids — several bundles each,
 winning at most one — and the item universe is whatever items get named.
@@ -122,6 +126,8 @@ these four bidders differ only in how they spread the same money:
 | `pace_multiplicative` | Bids `value × μ`, steering μ to finish the day on budget |
 | `throttle` | Bids its full value, but only enters a fraction *p* of auctions |
 | `pid_winrate` | Steers a target *win rate* with proportional + integral terms |
+
+![Cumulative spend per bidder across a day, each against its own budget line](docs/img/spend.png)
 
 Same budget of 400 over a 30-round day, same market, same draws:
 
@@ -191,6 +197,8 @@ win it back. Across the 35, revenue runs from 0 to 100 and 8 of them hand the it
 bidder. That is what Nash promises: no unilateral regret, and nothing else. **Dominance** is the
 stronger claim, asked and answered separately — is bidding your value a best reply to *every* rival
 profile, not merely to one — and it is what "second-price is truthful" actually means.
+
+![A best-response curve under first-price: a single sharp peak below the bidder's own value](docs/img/best-response.png)
 
 Untruthfulness is never reported as an absence. It is pinned to a deviation:
 
