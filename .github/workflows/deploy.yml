@@ -1,7 +1,8 @@
-# Deploys to frame-vault on every push to main, the same way the other
-# services on that box deploy: build to GHCR, then compose pull/up over
-# password SSH. Needs the same three repo secrets as frame-vault's own
-# workflows: SERVER_PASSWORD, SERVER_HOST, SERVER_USER.
+# Deploys to frame-vault on every push to main, the same way tipster and
+# outlawdb deploy: build to GHCR, compose pull/up over key SSH, then install
+# our vhost on the shared edge proxy (/srv/caddy, repo `edge`). Needs three
+# repo secrets, same names as tipster's: SSH_KEY (the auction-lab-ci private
+# key), SSH_HOST, SSH_USER.
 name: deploy
 
 on:
@@ -50,20 +51,22 @@ jobs:
 
       - name: Deploy to VM over SSH
         env:
-          SSHPASS: ${{ secrets.SERVER_PASSWORD }}
-          HOST: ${{ secrets.SERVER_HOST }}
-          USER: ${{ secrets.SERVER_USER }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          HOST: ${{ secrets.SSH_HOST }}
+          USER: ${{ secrets.SSH_USER }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -z "${SSHPASS:-}" ] || [ -z "${HOST:-}" ] || [ -z "${USER:-}" ]; then
-            echo "::error::Missing repo secrets — set SERVER_PASSWORD, SERVER_HOST, SERVER_USER"
+          if [ -z "${SSH_KEY:-}" ] || [ -z "${HOST:-}" ] || [ -z "${USER:-}" ]; then
+            echo "::error::Missing repo secrets — set SSH_KEY, SSH_HOST, SSH_USER"
             exit 1
           fi
-          sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
-          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 $USER@$HOST"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          SSH="ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 $USER@$HOST"
           $SSH mkdir -p auction-lab
-          sshpass -e scp -o StrictHostKeyChecking=accept-new \
-            docker-compose.yml "$USER@$HOST:auction-lab/docker-compose.yml"
+          scp -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new \
+            docker-compose.yml deploy/auction-lab.caddy "$USER@$HOST:auction-lab/"
           $SSH bash -s <<EOF
           set -euo pipefail
           cd auction-lab
@@ -71,12 +74,34 @@ jobs:
           docker compose pull web
           docker compose up -d --no-build
           docker image prune -f
+
+          # Reassert our vhost on the shared edge proxy — same idiom as
+          # tipster: reload is atomic, but a broken file left in conf.d would
+          # fail every OTHER app's next reload, so a rejected config restores
+          # the previous copy before failing this deploy.
+          if [ -d /srv/caddy/conf.d ]; then
+            vhost=/srv/caddy/conf.d/auction-lab.caddy
+            backup="\$(mktemp)"
+            [ -f "\$vhost" ] && cp "\$vhost" "\$backup"
+            install -m644 auction-lab.caddy "\$vhost"
+            if ! docker exec caddy caddy reload --config /etc/caddy/Caddyfile; then
+              echo "ABORT: caddy rejected our vhost; restoring the previous one" >&2
+              if [ -s "\$backup" ]; then cp "\$backup" "\$vhost"; else rm -f "\$vhost"; fi
+              docker exec caddy caddy reload --config /etc/caddy/Caddyfile || true
+              rm -f "\$backup"; exit 1
+            fi
+            rm -f "\$backup"
+            echo "edge: auction-lab.caddy installed, caddy reloaded"
+          else
+            echo "WARNING: /srv/caddy/conf.d missing — edge not set up; no domain routing." >&2
+          fi
           EOF
 
       - name: Verify it serves
         env:
-          SSHPASS: ${{ secrets.SERVER_PASSWORD }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
         run: |
           sleep 10
-          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}"
-          $SSH "curl -sf http://127.0.0.1:8100/presets > /dev/null && echo OK: /presets answers"
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            "curl -sf http://127.0.0.1:8100/presets > /dev/null && echo OK: /presets answers"

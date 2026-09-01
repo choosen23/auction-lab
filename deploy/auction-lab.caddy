@@ -1,0 +1,26 @@
+# auctionlab.dev -- the vhost for this app, on the shared edge proxy.
+#
+# Installed into /srv/caddy/conf.d/ by .github/workflows/deploy.yml, same
+# pattern as tipster and outlawdb: this file is the copy of record, the edge
+# proxy owns no routing of its own, and a VM rebuild recovers us on the next
+# push.
+#
+# The port is the host port `web` publishes in docker-compose.yml (8100).
+# If you change one, change the other in the same commit.
+#
+# Until the domain is registered and its A record points at this box, Caddy
+# parses this file fine and simply retries the certificate in the background;
+# the site goes live on its own once DNS resolves.
+www.auctionlab.dev {
+	redir https://auctionlab.dev{uri} permanent
+}
+
+auctionlab.dev {
+	encode gzip zstd
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+	reverse_proxy host.docker.internal:8100
+}
