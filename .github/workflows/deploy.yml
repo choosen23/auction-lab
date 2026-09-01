@@ -1,0 +1,80 @@
+# Deploys to frame-vault on every push to main, the same way the other
+# services on that box deploy: build to GHCR, then compose pull/up over
+# password SSH. Needs the same three repo secrets as frame-vault's own
+# workflows: SERVER_PASSWORD, SERVER_HOST, SERVER_USER.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest
+      - run: pytest -q
+      - run: node --test web/*.test.mjs
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+
+      - name: Deploy to VM over SSH
+        env:
+          SSHPASS: ${{ secrets.SERVER_PASSWORD }}
+          HOST: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "${SSHPASS:-}" ] || [ -z "${HOST:-}" ] || [ -z "${USER:-}" ]; then
+            echo "::error::Missing repo secrets — set SERVER_PASSWORD, SERVER_HOST, SERVER_USER"
+            exit 1
+          fi
+          sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 $USER@$HOST"
+          $SSH mkdir -p auction-lab
+          sshpass -e scp -o StrictHostKeyChecking=accept-new \
+            docker-compose.yml "$USER@$HOST:auction-lab/docker-compose.yml"
+          $SSH bash -s <<EOF
+          set -euo pipefail
+          cd auction-lab
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          docker compose pull web
+          docker compose up -d --no-build
+          docker image prune -f
+          EOF
+
+      - name: Verify it serves
+        env:
+          SSHPASS: ${{ secrets.SERVER_PASSWORD }}
+        run: |
+          sleep 10
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}"
+          $SSH "curl -sf http://127.0.0.1:8100/presets > /dev/null && echo OK: /presets answers"

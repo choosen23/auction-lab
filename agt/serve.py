@@ -191,11 +191,11 @@ class Handler(BaseHTTPRequestHandler):
 # --------------------------------------------------------------- entry point
 
 
-def serve(port: int = DEFAULT_PORT) -> None:
-    httpd = ThreadingHTTPServer((HOST, port), Handler)
+def serve(port: int = DEFAULT_PORT, host: str = HOST) -> None:
+    httpd = ThreadingHTTPServer((host, port), Handler)
     # flush: stdout is block-buffered when piped, and the URL is the whole point.
     print(
-        f"agt visualizer: http://{HOST}:{httpd.server_address[1]}/  (ctrl-c to stop)",
+        f"agt visualizer: http://{host}:{httpd.server_address[1]}/  (ctrl-c to stop)",
         flush=True,
     )
     try:
@@ -209,7 +209,11 @@ def serve(port: int = DEFAULT_PORT) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="python3 -m agt.serve")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    serve(parser.parse_args(argv).port)
+    # Loopback stays the default (see HOST above). --host 0.0.0.0 exists for one
+    # caller: a container, where docker's port mapping decides who reaches it.
+    parser.add_argument("--host", default=HOST)
+    args = parser.parse_args(argv)
+    serve(args.port, args.host)
 
 
 if __name__ == "__main__":

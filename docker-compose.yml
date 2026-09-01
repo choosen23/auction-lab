@@ -1,0 +1,10 @@
+# Runs on frame-vault next to the other services; deployed by
+# .github/workflows/deploy.yml, which scp's this file and pulls the image.
+services:
+  web:
+    image: ghcr.io/choosen23/auction-lab:latest
+    container_name: auction-lab
+    restart: unless-stopped
+    ports:
+      # Host port 8100; the reverse proxy / DNS step points at this.
+      - "8100:8000"
