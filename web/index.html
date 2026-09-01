@@ -18,10 +18,13 @@
 <body>
 
 <header class="app-head">
+  <p class="eyebrow">Auction Lab</p>
   <h1>Auction walkthrough</h1>
-  <p class="sub">Run a mechanism, then step through it one stage at a time. Everything on the
-  right is drawn from the trace the engine emitted &mdash; nothing here knows what the
-  mechanisms are.</p>
+  <!-- Written from the reader's side of the screen: what they do and what they
+       see. The trace-driven architecture is a README fact, not a front-door one. -->
+  <p class="sub">Set up bidders, pick a mechanism, and step through it one stage at a
+  time &mdash; bids arrive, get sorted, a winner is chosen, a pricing rule fires,
+  payments settle.</p>
 </header>
 
 <!-- The front door. web/start.js fills this from GET /presets and opens the page on
@@ -215,7 +218,7 @@
       <div id="campaign-charts"></div>
     </section>
 
-    <section class="card" aria-labelledby="step-h">
+    <section class="card step-card" aria-labelledby="step-h">
       <div class="step-head">
         <div>
           <p class="step-count" id="step-count">No trace yet</p>

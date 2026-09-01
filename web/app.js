@@ -178,7 +178,15 @@ function renderStageList(trace, index) {
 
 function renderStep(trace, step, index) {
   $('step-count').textContent = `Step ${index + 1} of ${trace.steps.length}`;
-  $('step-h').textContent = step.label || '';
+
+  const heading = $('step-h');
+  heading.textContent = step.label || '';
+  // Progress rail across the card's top, and a re-triggered entrance on the
+  // label — both pure CSS, both inert under prefers-reduced-motion.
+  heading.closest('.step-card').style.setProperty('--step-progress', (index + 1) / trace.steps.length);
+  heading.classList.remove('is-in');
+  void heading.offsetWidth;
+  heading.classList.add('is-in');
   $('step-detail').textContent = step.detail || '';
 
   const stage = step.highlight && step.highlight.stage;

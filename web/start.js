@@ -199,6 +199,11 @@ function runPreset(preset) {
   // Press the page's own button rather than calling a runner directly: series.js
   // also listens on #run to clear the previous series, and skipping that would
   // leave a stale chart next to a fresh trace.
+  //
+  // An equilibrium preset runs the single auction first: its card opens with
+  // "not what happens at these bids", so "these bids" had better be the
+  // walkthrough beside it, not whatever the previous example left there.
+  if (preset.mode === 'equilibrium') $(RUN_BUTTON.single).click();
   $(RUN_BUTTON[preset.mode]).click();
 }
 

@@ -319,5 +319,12 @@ window.equilibriumExt = {
   boot() {
     const button = $('run-equilibrium');
     if (button) button.addEventListener('click', runEquilibrium);
+
+    // Same idiom as series.js listening on #run: a fresh run means the analysis
+    // on screen no longer describes the bids on screen, so it leaves with them.
+    for (const id of ['run', 'run-series']) {
+      const runButton = $(id);
+      if (runButton) runButton.addEventListener('click', () => { $('equilibrium-card').hidden = true; });
+    }
   },
 };

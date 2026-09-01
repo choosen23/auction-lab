@@ -332,6 +332,15 @@ window.campaignExt = {
     if (setup) setup.addEventListener('input', syncBudgetRows);
     const add = $('add-bidder');
     if (add) add.addEventListener('click', () => setTimeout(syncBudgetRows, 0));
+
+    // Same idiom as series.js and equilibrium.js listening on the other run
+    // buttons: a single run or an equilibrium analysis has no day behind it, so
+    // yesterday's day card leaves with the run it described. A new series
+    // repopulates it through onSeries.
+    for (const id of ['run', 'run-equilibrium']) {
+      const runButton = $(id);
+      if (runButton) runButton.addEventListener('click', () => { $('campaign-card').hidden = true; });
+    }
   },
 
   onSeries(data, order) {

@@ -579,22 +579,27 @@ function renderPathChart() {
     }
   }
 
-  // --- end labels, but only when they do not collide -----------------------
-  // ponytail: converging lines drop ALL their end labels rather than routing
-  // leader lines to them; nudging labels apart detaches them from their lines and
-  // reads as noise. Ceiling: on a converged series nobody is directly labelled and
-  // the legend carries identity alone. Upgrade path: leader lines, or facet into
-  // small multiples past ~4 converging bidders.
+  // --- end labels ----------------------------------------------------------
+  // Lines that end within one label's height share a label: bids that converged
+  // to the same number are one fact ("A, B 80"), not a collision to dodge. The
+  // shared label sits at the group's centre, so it stays attached to its lines.
   const ends = drawn.map((row) => ({ ...row, last: row.path[n - 1] }))
                     .map((row) => ({ ...row, y: y(isNum(row.last) ? row.last : 0) }));
   const sorted = [...ends].sort((a, b) => a.y - b.y);
-  const collide = sorted.some((row, i) => i > 0 && row.y - sorted[i - 1].y < PATH.labelGap);
 
-  if (!collide) {
-    for (const row of ends) {
-      svg.append(s('text', { class: 'end-label', x: x(n - 1) + 11, y: row.y + 4, 'text-anchor': 'start' },
-                  `${short(row.id, 8)} ${fmt(row.last)}`));
-    }
+  const groups = [];
+  for (const row of sorted) {
+    const open = groups[groups.length - 1];
+    if (open && row.y - open.rows[open.rows.length - 1].y < PATH.labelGap) open.rows.push(row);
+    else groups.push({ rows: [row] });
+  }
+  for (const group of groups) {
+    const mid = group.rows.reduce((sum, row) => sum + row.y, 0) / group.rows.length;
+    const names = group.rows.map((row) => short(row.id, 8)).join(', ');
+    // Near-misses inside the gap keep both numbers, separated: "C, D 51 / 50".
+    const values = [...new Set(group.rows.map((row) => fmt(row.last)))].join(' / ');
+    svg.append(s('text', { class: 'end-label', x: x(n - 1) + 11, y: mid + 4, 'text-anchor': 'start' },
+                `${names} ${values}`));
   }
 
   // --- crosshair: aim at a round, read every bidder at once ----------------
