@@ -20,7 +20,9 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pytest
-      - run: pytest -q
+      # python -m pytest, not bare pytest: -m puts the repo root on sys.path,
+      # which is how `import agt` resolves — same invocation as tests.yml.
+      - run: python -m pytest -q
       - run: node --test web/*.test.mjs
 
   deploy:
