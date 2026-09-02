@@ -2,7 +2,10 @@
 
 Watch auction mechanisms run, one algorithmic step at a time.
 
+**Live at [auctionlab.dev](https://auctionlab.dev)** — no install, opens on a worked example.
+
 [![tests](https://github.com/choosen23/auction-lab/actions/workflows/tests.yml/badge.svg)](https://github.com/choosen23/auction-lab/actions/workflows/tests.yml)
+[![deploy](https://github.com/choosen23/auction-lab/actions/workflows/deploy.yml/badge.svg)](https://github.com/choosen23/auction-lab/actions/workflows/deploy.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Set up bidders and their private values, pick a mechanism, and step through it: bids arrive, get
@@ -10,6 +13,8 @@ sorted, a winner is chosen, a pricing rule fires, payments settle. Every step sh
 fired and the numbers it produced.
 
 ![Stepping through a second-price auction: collect bids, sort, allocate, price rule, payments](docs/img/walkthrough.gif)
+
+To run it locally instead:
 
 ```
 python3 -m agt.serve
@@ -370,10 +375,19 @@ whatever the strategy steers in `BidDecision.control` and it gets a chart for fr
 
 ## Deploying
 
-`agt.serve` binds `127.0.0.1` and always will. That is not a limitation to work around — it is the
-correct thing to do on a server, because the process has no authentication, no TLS and no rate
-limiting, and it should never be the thing facing the internet. Put a reverse proxy in front of it
-and let the proxy own the certificate:
+`agt.serve` binds `127.0.0.1` by default, and that default is the point: the process has no
+authentication, no TLS and no rate limiting, so it should never be the thing facing the internet.
+Whatever fronts it — a reverse proxy, a container port mapping — owns the certificate and decides
+who can reach it. `--host 0.0.0.0` exists for exactly one caller, the `Dockerfile`, where the
+compose port mapping is the thing doing the gating.
+
+[auctionlab.dev](https://auctionlab.dev) itself deploys on every push to `main`
+(`.github/workflows/deploy.yml`): the tests gate a GHCR image build, the image is pulled onto the
+server by `docker-compose.yml`, and `deploy/auction-lab.caddy` is installed on a shared
+[Caddy](https://caddyserver.com) edge proxy that terminates TLS and forwards to the container's
+host port. The deploy fails unless `/presets` answers afterwards.
+
+To self-host without Docker, the same shape in nginx:
 
 ```nginx
 server {
@@ -466,6 +480,13 @@ Nothing is queued. The obvious next steps, in rough order of how much they would
 mixed-strategy equilibria for the games that have no pure one (`all_pay` is the standing example),
 numerically solved Bayes-Nash bid functions so the revenue check stops relying on closed forms that
 only exist for uniform values, and asymmetric or correlated value distributions in the world model.
+
+## Citing
+
+[`CITATION.cff`](CITATION.cff) is the copy of record — GitHub's **"Cite this repository"** button
+renders it in APA and BibTeX. If auction-lab makes it into teaching material or a paper, a citation
+or an [issue](https://github.com/choosen23/auction-lab/issues) saying where is genuinely welcome;
+it is how a teaching tool learns what it taught.
 
 ## Prior art
 
