@@ -8,6 +8,8 @@ authors:
     orcid: "https://orcid.org/0009-0005-7388-0680"
 repository-code: "https://github.com/choosen23/auction-lab"
 url: "https://auctionlab.dev"
+# The concept DOI — resolves to the latest archived version on Zenodo.
+doi: 10.5281/zenodo.22246375
 abstract: >-
   auction-lab renders auction mechanisms as inspectable sequences of
   algorithmic steps. It covers single-item mechanisms (first-price,

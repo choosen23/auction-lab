@@ -7,6 +7,7 @@ Watch auction mechanisms run, one algorithmic step at a time.
 [![tests](https://github.com/choosen23/auction-lab/actions/workflows/tests.yml/badge.svg)](https://github.com/choosen23/auction-lab/actions/workflows/tests.yml)
 [![deploy](https://github.com/choosen23/auction-lab/actions/workflows/deploy.yml/badge.svg)](https://github.com/choosen23/auction-lab/actions/workflows/deploy.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22246375.svg)](https://doi.org/10.5281/zenodo.22246375)
 
 Set up bidders and their private values, pick a mechanism, and step through it: bids arrive, get
 sorted, a winner is chosen, a pricing rule fires, payments settle. Every step shows the rule that
@@ -484,7 +485,9 @@ only exist for uniform values, and asymmetric or correlated value distributions 
 ## Citing
 
 [`CITATION.cff`](CITATION.cff) is the copy of record — GitHub's **"Cite this repository"** button
-renders it in APA and BibTeX. If auction-lab makes it into teaching material or a paper, a citation
+renders it in APA and BibTeX. Releases are archived on Zenodo under the concept DOI
+[10.5281/zenodo.22246375](https://doi.org/10.5281/zenodo.22246375), which always resolves to the
+latest version. If auction-lab makes it into teaching material or a paper, a citation
 or an [issue](https://github.com/choosen23/auction-lab/issues) saying where is genuinely welcome;
 it is how a teaching tool learns what it taught.
 
