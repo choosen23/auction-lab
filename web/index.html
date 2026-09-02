@@ -14,8 +14,55 @@
      opening this file directly would otherwise resolve to file://gc.zgo.at. -->
 <script data-goatcounter="https://choosen23.goatcounter.com/count"
         async src="https://gc.zgo.at/count.js"></script>
+
+<!-- Google tag (gtag.js), consent-gated: nothing loads and no cookie is set
+     until Accept is clicked. Decline (or ignoring the banner) does nothing.
+     The choice persists in localStorage under "ga-consent". -->
+<script>
+  function loadGA(){
+    var s = document.createElement('script');
+    s.async = true;
+    s.src = 'https://www.googletagmanager.com/gtag/js?id=G-J9SMCVC5TG';
+    document.head.appendChild(s);
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-J9SMCVC5TG');
+  }
+  document.addEventListener('DOMContentLoaded', function(){
+    var banner = document.getElementById('consent-banner');
+    var choice = null;
+    try { choice = localStorage.getItem('ga-consent'); } catch (e) {}
+    if (choice === 'yes') { loadGA(); return; }
+    if (choice === 'no') return;
+    banner.hidden = false;
+    banner.addEventListener('click', function(e){
+      if (!e.target.dataset.consent) return;
+      try { localStorage.setItem('ga-consent', e.target.dataset.consent); } catch (e2) {}
+      banner.hidden = true;
+      if (e.target.dataset.consent === 'yes') loadGA();
+    });
+  });
+</script>
+<style>
+  #consent-banner {
+    position: fixed; left: 16px; right: 16px; bottom: 16px; z-index: 100;
+    max-width: 440px; margin: 0 auto; padding: 14px 16px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: 0 4px 24px rgba(11, 11, 11, 0.12);
+  }
+  #consent-banner p { margin: 0 0 10px; font-size: 0.9rem; color: var(--ink-2); }
+  #consent-banner button { margin-right: 8px; padding: 7px 14px; }
+</style>
 </head>
 <body>
+
+<div id="consent-banner" hidden>
+  <p>Allow Google Analytics? It sets cookies to measure visits. Declining
+  changes nothing &mdash; the site works the same either way.</p>
+  <button data-consent="yes">Accept</button>
+  <button data-consent="no">Decline</button>
+</div>
 
 <header class="app-head">
   <p class="eyebrow">Auction Lab</p>
